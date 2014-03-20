@@ -1,0 +1,6 @@
+env = Environment()
+env.Append(CFLAGS=['-std=c99', '-Wall', '-Werror'])
+env.Append(LIBS=['event'])
+fwd = env.StaticObject('fwd.o', 'fwd.c')
+ringbuf = env.StaticObject('ringbuf.o', 'ringbuf.c')
+fssh_fwd = env.Program('fssh-fwd', [fwd, ringbuf])
