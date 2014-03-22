@@ -18,7 +18,7 @@ If unsuccessful, it creates this domain socket, starts listening on it, and spaw
 It then starts forwarding data between the domain socket and its own stdin/stdout.
 - `fssh-daemon <guid> pgm args...` spawns `pgm args...` and accepts connections on the domain socket.
 Thanks to `fssh-fwd`, it effectively talks to `fssh` via the domain socket.
-During execution of `pgm`, `fssh` and `fssh-daemon` keep running, while `fssh-fwd` might be restarted due to TCP connection losses.
+During execution of `pgm`, `fssh` and `fssh-daemon` keep running, while `fssh-fwd` might be restarted multiple times due to TCP connection losses.
 In order to guarantee that no input or output is lost, `fssh` and `fssh-daemon` communicate using buffer synchronization protocol.
 
 Each side keeps an input and an output buffers.
@@ -33,9 +33,10 @@ Sides exchange messages in the following format:
 +--------------------------------------------------------------------------+
 ```
 Outgoing messages are appended to the output buffer. Incoming messages are received directly into the input buffer.
-There are two message types: data (type 0) and acknowledgement (type 1).
+There are three message types: data (type 0), status (type 1) and acknowledgement (type 2).
 Data message carries payload for one of the three streams (0 - stdin, 1 - stdout, 2 - stderr). Upon receipt, its payload is dispatched accordingly, and an acknowledgement message is appended to the output buffer.
-When an acknowledgement message is received, its stream field is ignored, its payload is interpreted as a big-endian uint32_t byte index, and bytes up to this index are discarded from the output buffer.
+Status message's stream field is ignored, and payload is big-endian `uint32\_t`, as returned by `wait(2)`.
+When an acknowledgement message is received, its stream field is ignored, its payload is interpreted as a big-endian `uint64\_t` byte index, and bytes up to this index are discarded from the output buffer.
 
 Random thoughts:
 - One should be able to replace `ssh` with other command using `FSSH_SSH` environment variable.
@@ -49,3 +50,4 @@ Random thoughts:
 
 Dependencies:
 - `libevent2` (http://libevent.org/)
+- `LTTng` (https://lttng.org/)

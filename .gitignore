@@ -1,4 +1,5 @@
-fwd.o
-ringbuf.o
+*.o
+*.swp
 fssh-fwd
+fssh-daemon
 .sconsign.dblite
