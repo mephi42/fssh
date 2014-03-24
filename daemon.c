@@ -17,6 +17,7 @@
 
 #include "nonblock.h"
 #include "ringbuf.h"
+#include "sigutils.h"
 #include "trace.h"
 #include "un.h"
 
@@ -92,15 +93,15 @@ int pipes_reset(struct pipes *pipes)
 int handle_pipes_in_child(struct pipes *pipes)
 {
 	int rc = -1;
-	if (dup2(pipes->stdin[READ_END], 0) == -1) {
+	if (dup2(pipes->stdin[READ_END], STDIN_FILENO) == -1) {
 		TRACE_ERRNO("dup2(%d, 0) failed", pipes->stdin[READ_END]);
 		goto _out;
 	}
-	if (dup2(pipes->stdout[WRITE_END], 1) == -1) {
+	if (dup2(pipes->stdout[WRITE_END], STDOUT_FILENO) == -1) {
 		TRACE_ERRNO("dup2(%d, 1) failed", pipes->stdout[WRITE_END]);
 		goto _out;
 	}
-	if (dup2(pipes->stderr[WRITE_END], 2) == -1) {
+	if (dup2(pipes->stderr[WRITE_END], STDERR_FILENO) == -1) {
 		TRACE_ERRNO("dup2(%d, 2) failed", pipes->stderr[WRITE_END]);
 		goto _out;
 	}
@@ -599,21 +600,6 @@ _fail:
 	_exit(1);
 }
 
-int ignore_hup()
-{
-	int rc = -1;
-	struct sigaction sa;
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = SIG_IGN;
-	if (sigaction(SIGHUP, &sa, NULL) == -1) {
-		TRACE_ERRNO("sigaction(SIGHUP) failed");
-		goto _out;
-	}
-	rc = 0;
-_out:
-	return rc;
-}
-
 int main(int argc, char **argv)
 {
 	int rc = 1;
@@ -640,8 +626,8 @@ int main(int argc, char **argv)
 		goto _out_reset_pipes;
 	}
 
-	if (ignore_hup() == -1) {
-		TRACE_ERRNO("ignore_hup() failed");
+	if (ignore_signal(SIGHUP) == -1) {
+		TRACE_ERRNO("ignore_signal(SIGHUP) failed");
 		goto _out_reset_pipes;
 	}
 

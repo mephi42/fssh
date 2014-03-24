@@ -7,10 +7,12 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "nonblock.h"
 #include "ringbuf.h"
+#include "sigutils.h"
 #include "trace.h"
 #include "un.h"
 
@@ -60,7 +62,7 @@ _fail_listen:
 
 int create_session(const char *guid, const char *pgm, char **args, size_t arg_count)
 {
-	int s = socket(AF_UNIX, SOCK_STREAM, 0);
+	int s = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (s == -1) {
 		TRACE_ERRNO("socket() failed");
 		goto _fail_socket;
@@ -281,12 +283,12 @@ int fwd_init(struct fwd *fwd, int socket_fd)
 		goto _fail_base;
 	}
 
-	if (fwd_oneway_init(&fwd->to_socket, fwd->base, 0, socket_fd) == -1) {
+	if (fwd_oneway_init(&fwd->to_socket, fwd->base, STDIN_FILENO, socket_fd) == -1) {
 		TRACE("fwd_oneway_init() failed");
 		goto _fail_to_socket;
 	}
 
-	if (fwd_oneway_init(&fwd->from_socket, fwd->base, socket_fd, 1) == -1) {
+	if (fwd_oneway_init(&fwd->from_socket, fwd->base, socket_fd, STDOUT_FILENO) == -1) {
 		TRACE("fwd_oneway_init() failed");
 		goto _fail_from_socket;
 	}
@@ -325,8 +327,8 @@ int fwd(int socket_fd)
 {
 	int rc = -1;
 
-	if (make_nonblocking(0) == -1 ||
-	    make_nonblocking(1) == -1 ||
+	if (make_nonblocking(STDIN_FILENO) == -1 ||
+	    make_nonblocking(STDOUT_FILENO) == -1 ||
 	    make_nonblocking(socket_fd) == -1) {
 		TRACE("make_nonblocking() failed");
 		goto _out;
@@ -368,6 +370,11 @@ int main(int argc, char **argv)
 
 	if (argc < 3) {
 		fprintf(stderr, "Usage: %s GUID PROGRAM [ARG]...\n", argv[0]);
+		goto _out;
+	}
+
+	if (ignore_signal(SIGCHLD) == -1) {
+		TRACE("ignore_signal(SIGCHLD) failed");
 		goto _out;
 	}
 
