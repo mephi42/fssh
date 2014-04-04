@@ -53,41 +53,35 @@ static void zmq_free_wrapper(void *data, void *hint)
 	free(data);
 }
 
-static int fd_write(int fd, short *fd_events, zmq_msg_t *msg, size_t *msg_pos)
+static int fd_write(int fd, zmq_msg_t *msg, size_t *msg_pos)
 {
-	if (!*msg_pos || (*fd_events & ZMQ_POLLOUT))
+	if (!*msg_pos)
 		return 0;
 	char *msg_data = zmq_msg_data(msg);
 	size_t msg_size = zmq_msg_size(msg);
-	ssize_t count = write(fd, msg_data + *msg_pos, msg_size - *msg_pos);
-	if (count == -1) {
-		if (errno == EAGAIN) {
-			*fd_events |= ZMQ_POLLOUT;
-			return 0;
+	while (*msg_pos != msg_size) {
+		ssize_t count = write(fd, msg_data + *msg_pos, msg_size - *msg_pos);
+		if (count == -1) {
+			if (errno == EAGAIN)
+				return 0;
+			TRACE_ERRNO("write(%i, %p, %zu) failed", fd, msg_data + *msg_pos, msg_size - *msg_pos);
+			return -1;
 		}
-		TRACE_ERRNO("write(%i, %p, %zu) failed", fd, msg_data + *msg_pos, msg_size - *msg_pos);
-		return -1;
+		*msg_pos += count;
 	}
-	*msg_pos += count;
-	if (*msg_pos == msg_size) {
-		if (zmq_msg_close(msg) == -1)
-			TRACE_ERRNO("zmq_msg_close() failed");
-		*msg_pos = 0;
-	} else {
-		*fd_events |= ZMQ_POLLOUT;
-	}
+	if (zmq_msg_close(msg) == -1)
+		TRACE_ERRNO("zmq_msg_close() failed");
+	*msg_pos = 0;
 	return 0;
 }
 
-static int socket_write(void *socket, short *socket_events, zmq_msg_t *msg, int *msg_valid)
+static int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 {
-	if (!*msg_valid || (*socket_events & ZMQ_POLLOUT))
+	if (!*msg_valid)
 		return 0;
 	if (zmq_msg_send(msg, socket, ZMQ_DONTWAIT) == -1) {
-		if (errno == EAGAIN) {
-			*socket_events |= ZMQ_POLLOUT;
+		if (errno == EAGAIN)
 			return 0;
-		}
 		TRACE_ERRNO("zmq_msg_write() failed");
 		return -1;
 	}
@@ -95,9 +89,9 @@ static int socket_write(void *socket, short *socket_events, zmq_msg_t *msg, int 
 	return 0;
 }
 
-static int on_fd_readable(int fd, short *fd_events, void *socket, short *socket_events, zmq_msg_t *msg, int *msg_valid, char msg_type)
+static int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char msg_type)
 {
-	if (*msg_valid || (*fd_events & ZMQ_POLLIN))
+	if (*msg_valid)
 		return 0;
 	while (1) {
 		const size_t bufsize = 4096;
@@ -107,14 +101,13 @@ static int on_fd_readable(int fd, short *fd_events, void *socket, short *socket_
 			return -1;
 		}
 		buf[0] = msg_type;
-		ssize_t count = read(fd, buf + 1, bufsize - 1);
+		ssize_t count = read(*fd, buf + 1, bufsize - 1);
 		if (count == -1) {
 			if (errno == EAGAIN) {
 				free(buf);
-				*fd_events |= ZMQ_POLLIN;
 				return 0;
 			}
-			TRACE_ERRNO("read(%i, %p, %zu) failed", fd, buf + 1, bufsize - 1);
+			TRACE_ERRNO("read(%i, %p, %zu) failed", *fd, buf + 1, bufsize - 1);
 			free(buf);
 			return -1;
 		}
@@ -124,29 +117,29 @@ static int on_fd_readable(int fd, short *fd_events, void *socket, short *socket_
 			return -1;
 		}
 		*msg_valid = 1;
-		if (socket_write(socket, socket_events, msg, msg_valid) == -1)
+		if (socket_write(socket, msg, msg_valid) == -1)
 			return -1;
-		if (count != bufsize - 1) {
-			*fd_events |= ZMQ_POLLIN;
+		if (count == 0) {
+			if (close(*fd))
+				TRACE_ERRNO("close(%i) failed", *fd);
+			*fd = -1;
 			return 0;
 		}
 	}
 }
 
-int on_socket_readable(void *socket, short *socket_events, int stdin_fd, short *stdin_events, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
+int on_socket_readable(void *socket, int stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
 {
 	while (1) {
-		if (*stdin_msg_pos || (*socket_events & ZMQ_POLLIN))
+		if (*stdin_msg_pos)
 			return 0;
 		if (zmq_msg_init(stdin_msg) == -1) {
 			TRACE("zmq_msg_init() failed");
 			return -1;
 		}
 		if (zmq_msg_recv(stdin_msg, socket, ZMQ_DONTWAIT) == -1) {
-			if (errno == EAGAIN) {
-				*socket_events |= ZMQ_POLLIN;
+			if (errno == EAGAIN)
 				return 0;
-			}
 			TRACE_ERRNO("zmq_msg_recv() failed");
 			return -1;
 		}
@@ -157,8 +150,7 @@ int on_socket_readable(void *socket, short *socket_events, int stdin_fd, short *
 		char *msg_data = zmq_msg_data(stdin_msg);
 		if (msg_data[0] == msg_type_stdin) {
 			*stdin_msg_pos = 1;
-			if (fd_write(stdin_fd, stdin_events,
-			             stdin_msg, stdin_msg_pos) == -1)
+			if (fd_write(stdin_fd, stdin_msg, stdin_msg_pos) == -1)
 				return -1;
 		} else {
 			TRACE("message with unexpected type received");
@@ -190,68 +182,75 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 	zmq_msg_t stderr_msg;
 	int stderr_msg_valid = 0;
 
-	enum poll_index {
-		poll_index_stdin,
-		poll_index_stdout,
-		poll_index_stderr,
-		poll_index_socket,
-		poll_index_count,
-	};
-
-	zmq_pollitem_t items[poll_index_count];
-	memset(&items, 0, sizeof(items));
-	items[poll_index_stdin].fd = stdin_pipe[1];
-	items[poll_index_stdout].fd = stdout_pipe[0];
-	items[poll_index_stderr].fd = stderr_pipe[0];
-	items[poll_index_socket].socket = socket;
-
 	while (1) {
-		if (!stdin_msg_pos)
-			items[poll_index_socket].events |= ZMQ_POLLIN;
-		if (!stdout_msg_valid)
-			items[poll_index_stdout].events |= ZMQ_POLLIN;
-		if (!stderr_msg_valid)
-			items[poll_index_stderr].events |= ZMQ_POLLIN;
-		if (items[poll_index_stdin].events == 0 &&
-		    items[poll_index_stdout].events == 0 &&
-		    items[poll_index_stderr].events == 0 &&
-		    items[poll_index_socket].events == 0)
+		if (stdin_pipe[1] == -1 && stdout_pipe[0] == -1 && stderr_pipe[0] == -1)
 			break;
-		if (zmq_poll(items, poll_index_count, -1) == -1) {
-			TRACE_ERRNO("zmq_poll() failed");
-			goto _out;
+
+		zmq_pollitem_t items[4];
+		zmq_pollitem_t *item = items;
+
+		zmq_pollitem_t *stdin_item = NULL;
+		if (stdin_pipe[1] != -1 && stdin_msg_pos) {
+			stdin_item = item++;
+			stdin_item->socket = NULL;
+			stdin_item->fd = stdin_pipe[1];
+			stdin_item->events = ZMQ_POLLOUT | ZMQ_POLLERR;
 		}
-		items[poll_index_stdin].events = 0;
-		items[poll_index_stdout].events = 0;
-		items[poll_index_stderr].events = 0;
-		items[poll_index_socket].events = 0;
 
-		if ((items[poll_index_stdin].revents & ZMQ_POLLOUT) &&
-		    fd_write(items[poll_index_stdin].fd, &items[poll_index_stdin].events,
-		             &stdin_msg, &stdin_msg_pos) == -1)
-			goto _out;
-		if ((items[poll_index_socket].revents & ZMQ_POLLOUT) &&
-		    (socket_write(socket, &items[poll_index_socket].events,
-		                  &stdout_msg, &stdout_msg_valid) == -1 ||
-		     socket_write(socket, &items[poll_index_socket].events,
-		                  &stderr_msg, &stderr_msg_valid) == -1))
-			goto _out;
+		zmq_pollitem_t *stdout_item = NULL;
+		if (stdout_pipe[0] != -1 && !stdout_msg_valid) {
+			stdout_item = item++;
+			stdout_item->socket = NULL;
+			stdout_item->fd = stdout_pipe[0];
+			stdout_item->events = ZMQ_POLLIN | ZMQ_POLLERR;
+		}
 
-		if ((items[poll_index_stdout].revents & ZMQ_POLLIN) &&
-		    on_fd_readable(items[poll_index_stdout].fd, &items[poll_index_stdout].events, 
-		                   socket, &items[poll_index_socket].events,
-		                   &stdout_msg, &stdout_msg_valid, msg_type_stdout) == -1)
-			goto _out;
-		if ((items[poll_index_stderr].revents & ZMQ_POLLIN) &&
-		    on_fd_readable(items[poll_index_stderr].fd, &items[poll_index_stderr].events,
-		                   socket, &items[poll_index_socket].events,
-		                   &stderr_msg, &stderr_msg_valid, msg_type_stderr) == -1)
-			goto _out;
-		if ((items[poll_index_socket].revents & ZMQ_POLLIN) &&
-		    on_socket_readable(socket, &items[poll_index_socket].events,
-		                       items[poll_index_stdin].fd, &items[poll_index_stdin].events,
-		                       &stdin_msg, &stdin_msg_pos) == -1)
-			goto _out;
+		zmq_pollitem_t *stderr_item = NULL;
+		if (stderr_pipe[0] != -1 && !stderr_msg_valid) {
+			stderr_item = item++;
+			stderr_item->socket = NULL;
+			stderr_item->fd = stderr_pipe[0];
+			stderr_item->events = ZMQ_POLLIN | ZMQ_POLLERR;
+		}
+
+		zmq_pollitem_t *socket_item = NULL;
+		short socket_events = ((stdout_msg_valid && stderr_msg_valid) ? 0 : ZMQ_POLLOUT) |
+		                      (stdin_msg_pos ? 0 : ZMQ_POLLIN);
+		if (socket_events) {
+			socket_item = item++;
+			socket_item->socket = socket;
+			socket_item->fd = -1;
+			socket_item->events = socket_events;
+		}
+
+		while (1) {
+			if (zmq_poll(items, item - items, -1) == -1) {
+				if (errno == EINTR)
+					continue;
+				TRACE_ERRNO("zmq_poll() failed");
+				goto _out;
+			}
+			break;
+		}
+
+		if (stdin_item && (stdin_item->revents & (ZMQ_POLLOUT | ZMQ_POLLERR)))
+			if (fd_write(stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
+				goto _out;
+		if (socket_item && (socket_item->revents & ZMQ_POLLOUT)) {
+			if (socket_write(socket, &stdout_msg, &stdout_msg_valid) == -1)
+				goto _out;
+			if (socket_write(socket, &stderr_msg, &stderr_msg_valid) == -1)
+				goto _out;
+		}
+		if (stdout_item && (stdout_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
+			if (on_fd_readable(&stdout_pipe[0], socket, &stdout_msg, &stdout_msg_valid, msg_type_stdout) == -1)
+				goto _out;
+		if (stderr_item && (stderr_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
+			if (on_fd_readable(&stderr_pipe[0], socket, &stderr_msg, &stderr_msg_valid, msg_type_stderr) == -1)
+				goto _out;
+		if (socket_item && (socket_item->revents & ZMQ_POLLIN))
+			if (on_socket_readable(socket, stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
+				goto _out;
 	}
 
 	rc = 0;
@@ -330,18 +329,19 @@ _out_wait:
 	if (waitpid(pid, &status, 0) == -1) {
 		TRACE_ERRNO("waitpid(%i) failed", pid);
 	} else if (rc == 0) {
+		TRACE("%s (%i) exited with status %i", argv[0], pid, status);
 		if (socket_write_exit(socket, status) == -1)
 			rc = -1;
 	}
 
 _out_free_stderr:
-	if (close(stderr_pipe[0]) == -1)
+	if (stderr_pipe[0] != -1 && close(stderr_pipe[0]) == -1)
 		TRACE_ERRNO("close(%i) failed", stderr_pipe[0]);
 	if (stderr_pipe[1] != -1 && close(stderr_pipe[1]) == -1)
 		TRACE_ERRNO("close(%i) failed", stderr_pipe[1]);
 
 _out_free_stdout:
-	if (close(stdout_pipe[0]) == -1)
+	if (stdout_pipe[0] != -1 && close(stdout_pipe[0]) == -1)
 		TRACE_ERRNO("close(%i) failed", stdout_pipe[0]);
 	if (stdout_pipe[1] != -1 && close(stdout_pipe[1]) == -1)
 		TRACE_ERRNO("close(%i) failed", stdout_pipe[1]);
@@ -349,7 +349,7 @@ _out_free_stdout:
 _out_free_stdin:
 	if (stdin_pipe[0] != -1 && close(stdin_pipe[0]) == -1)
 		TRACE_ERRNO("close(%i) failed", stdin_pipe[0]);
-	if (close(stdin_pipe[1]) == -1)
+	if (stdin_pipe[1] != -1 && close(stdin_pipe[1]) == -1)
 		TRACE_ERRNO("close(%i) failed", stdin_pipe[1]);
 
 _out:
