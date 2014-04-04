@@ -269,6 +269,24 @@ _out:
 	return rc;
 }
 
+static int socket_write_exit(void *socket, int status)
+{
+	zmq_msg_t msg;
+	if (zmq_msg_init_size(&msg, 5) == -1) {
+		TRACE_ERRNO("zmq_msg_init_size() failed");
+		return -1;
+	}
+
+	if (zmq_msg_send(&msg, socket, 0) == -1) {
+		TRACE_ERRNO("zmq_msg_send() failed");
+		if (zmq_msg_close(&msg) == -1)
+			TRACE_ERRNO("zmq_msg_close() failed");
+		return -1;
+	}
+
+	return 0;
+}
+
 static int execute_and_forward(char **argv, void *socket)
 {
 	int rc = -1;
@@ -311,7 +329,8 @@ _out_wait:
 	if (waitpid(pid, &status, 0) == -1) {
 		TRACE_ERRNO("waitpid(%i) failed", pid);
 	} else if (rc == 0) {
-		TRACE("TODO: send exit status");
+		if (socket_write_exit(socket, status) == -1)
+			rc = -1;
 	}
 
 _out_free_stderr:
