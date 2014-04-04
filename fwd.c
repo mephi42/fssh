@@ -131,7 +131,7 @@ int fwd_read(struct fwd_oneway *fwd)
 	if (count == -1) {
 		if (errno == EAGAIN)
 			return 0;
-		TRACE_ERRNO("read(%d, %d) failed", fwd->src_fd, max);
+		TRACE_ERRNO("read(%d, %zu) failed", fwd->src_fd, max);
 		return -1;
 	}
 	if (count == 0) {
@@ -151,7 +151,7 @@ int fwd_write(struct fwd_oneway *fwd)
 	if (count == -1) {
 		if (errno == EAGAIN)
 			return 0;
-		TRACE_ERRNO("write(%d, %d) failed", fwd->dst_fd, max);
+		TRACE_ERRNO("write(%d, %zu) failed", fwd->dst_fd, max);
 		return -1;
 	}
 	ringbuf_read(&fwd->buf, count);

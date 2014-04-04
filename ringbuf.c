@@ -12,7 +12,7 @@ int ringbuf_init(struct ringbuf *rb, size_t size)
 {
 	rb->buf = mmap(NULL, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (rb->buf == MAP_FAILED) {
-		TRACE_ERRNO("mmap(%d) failed", size * 2);
+		TRACE_ERRNO("mmap(%zu) failed", size * 2);
 		goto _fail;
 	}
 	rb->size = size;
@@ -21,7 +21,7 @@ int ringbuf_init(struct ringbuf *rb, size_t size)
 
 	int shm = shmget(IPC_PRIVATE, size, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 	if (shm == -1) {
-		TRACE_ERRNO("shmget(%d) failed", size);
+		TRACE_ERRNO("shmget(%zu) failed", size);
 		goto _fail_shmget;
 	}
 
@@ -48,7 +48,7 @@ _fail_shmat1:
 		TRACE_ERRNO("shmctl(%d) failed", shm);
 _fail_shmget:
 	if (munmap(rb->buf, size * 2))
-		TRACE_ERRNO("munmap(%p, %d) failed", rb->buf, size * 2);
+		TRACE_ERRNO("munmap(%p, %zu) failed", rb->buf, size * 2);
 _fail:
 	return -1;
 }
@@ -68,7 +68,7 @@ int ringbuf_reset(struct ringbuf *rb)
 	}
 
 	if (munmap(rb->buf, rb->size * 2) == -1) {
-		TRACE_ERRNO("munmap(%p, %d) failed", rb->buf, rb->size * 2);
+		TRACE_ERRNO("munmap(%p, %zu) failed", rb->buf, rb->size * 2);
 		rc = -1;
 	}
 
