@@ -1,9 +1,11 @@
 #define _GNU_SOURCE
 
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include "message.h"
 #include "trace.h"
 #include <unistd.h>
 #include <zmq.h>
@@ -45,13 +47,6 @@ __attribute__((noreturn)) static void execute(char **argv, int stdin_pipe[2], in
 _fail:
 	_exit(1);
 }
-
-enum msg_type {
-	msg_type_stdin = 0,
-	msg_type_stdout = 1,
-	msg_type_stderr = 2,
-	msg_type_exit = 3,
-};
 
 static void zmq_free_wrapper(void *data, void *hint)
 {
@@ -206,15 +201,17 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 	zmq_pollitem_t items[poll_index_count];
 	memset(&items, 0, sizeof(items));
 	items[poll_index_stdin].fd = stdin_pipe[1];
-	items[poll_index_stdin].events = 0;
 	items[poll_index_stdout].fd = stdout_pipe[0];
-	items[poll_index_stdout].events = ZMQ_POLLIN;
 	items[poll_index_stderr].fd = stderr_pipe[0];
-	items[poll_index_stderr].events = ZMQ_POLLIN;
 	items[poll_index_socket].socket = socket;
-	items[poll_index_socket].events = ZMQ_POLLIN;
 
 	while (1) {
+		if (!stdin_msg_pos)
+			items[poll_index_socket].events |= ZMQ_POLLIN;
+		if (!stdout_msg_valid)
+			items[poll_index_stdout].events |= ZMQ_POLLIN;
+		if (!stderr_msg_valid)
+			items[poll_index_stderr].events |= ZMQ_POLLIN;
 		if (items[poll_index_stdin].events == 0 &&
 		    items[poll_index_stdout].events == 0 &&
 		    items[poll_index_stderr].events == 0 &&
@@ -276,6 +273,10 @@ static int socket_write_exit(void *socket, int status)
 		TRACE_ERRNO("zmq_msg_init_size() failed");
 		return -1;
 	}
+
+	char *data = zmq_msg_data(&msg);
+	data[0] = msg_type_exit;
+	*(int32_t*)&data[1] = (int32_t)status;
 
 	if (zmq_msg_send(&msg, socket, 0) == -1) {
 		TRACE_ERRNO("zmq_msg_send() failed");
