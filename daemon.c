@@ -1,11 +1,14 @@
 #define _GNU_SOURCE
 
+#include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/signalfd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "message.h"
+#include "nonblock.h"
 #include "trace.h"
 #include <unistd.h>
 #include <zmq.h>
@@ -48,7 +51,7 @@ _fail:
 	_exit(1);
 }
 
-int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
+static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
 {
 	while (1) {
 		if (*stdin_msg_pos)
@@ -79,6 +82,27 @@ int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t
 	}
 }
 
+static int on_sigchld(int *sigchld_fd, pid_t pid, int *stdin_fd)
+{
+	struct signalfd_siginfo si;
+	ssize_t count = read(*sigchld_fd, &si, sizeof(si));
+	if (count == -1) {
+		if (errno == EAGAIN)
+			return 0;
+		TRACE_ERRNO("read(%i, %p, %zu) failed", *sigchld_fd, &si, sizeof(si));
+		return -1;
+	}
+	if (si.ssi_pid != pid)
+		return 0;
+	if (close(*sigchld_fd) == -1)
+		TRACE_ERRNO("close(%i) failed", *sigchld_fd);
+	*sigchld_fd = -1;
+	if (*stdin_fd != -1 && close(*stdin_fd) == -1)
+		TRACE_ERRNO("close(%i) failed", *stdin_fd);
+	*stdin_fd = -1;
+	return 0;
+}
+
 static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_pipe[2], void *socket)
 {
 	int rc = -1;
@@ -102,8 +126,30 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 	zmq_msg_t stderr_msg;
 	int stderr_msg_valid = 0;
 
+	if (make_nonblocking(stdin_pipe[1]) == -1)
+		goto _out_free_msg;
+	if (make_nonblocking(stdout_pipe[0]) == -1)
+		goto _out_free_msg;
+	if (make_nonblocking(stderr_pipe[0]) == -1)
+		goto _out_free_msg;
+
+	sigset_t sigchld;
+	if (sigemptyset(&sigchld) == -1) {
+		TRACE_ERRNO("sigemptyset() failed");
+		goto _out_free_msg;
+	}
+	if (sigaddset(&sigchld, SIGCHLD) == -1) {
+		TRACE_ERRNO("sigaddset() failed");
+		goto _out_free_msg;
+	}
+	int sigchld_fd = signalfd(-1, &sigchld, SFD_NONBLOCK);
+	if (sigchld_fd == -1) {
+		TRACE_ERRNO("signalfd() failed");
+		goto _out_free_msg;
+	}
+
 	while (1) {
-		zmq_pollitem_t items[4];
+		zmq_pollitem_t items[5];
 		zmq_pollitem_t *item = items;
 
 		zmq_pollitem_t *stdin_item = NULL;
@@ -140,6 +186,14 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 			socket_item->events = socket_events;
 		}
 
+		zmq_pollitem_t *sigchld_item = NULL;
+		if (sigchld_fd != -1) {
+			sigchld_item = item++;
+			sigchld_item->socket = NULL;
+			sigchld_item->fd = sigchld_fd;
+			sigchld_item->events = ZMQ_POLLIN | ZMQ_POLLERR;
+		}
+
 		if (item == items)
 			break;
 
@@ -171,16 +225,23 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 		if (socket_item && (socket_item->revents & ZMQ_POLLIN))
 			if (on_socket_readable(socket, &stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
 				goto _out;
+		if (sigchld_item && (sigchld_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
+			if (on_sigchld(&sigchld_fd, pid, &stdin_pipe[1]) == -1)
+				goto _out;
 	}
 
 	rc = 0;
 
 _out:
-	if (stdin_msg_pos && zmq_msg_close(&stdin_msg))
+	if (sigchld_fd != -1 && close(sigchld_fd) == -1)
+		TRACE_ERRNO("close(%i) failed", sigchld_fd);
+
+_out_free_msg:
+	if (stdin_msg_pos && zmq_msg_close(&stdin_msg) == -1)
 		TRACE_ERRNO("zmq_msg_close() failed");
-	if (stdout_msg_valid && zmq_msg_close(&stdout_msg))
+	if (stdout_msg_valid && zmq_msg_close(&stdout_msg) == -1)
 		TRACE_ERRNO("zmq_msg_close() failed");
-	if (stderr_msg_valid && zmq_msg_close(&stderr_msg))
+	if (stderr_msg_valid && zmq_msg_close(&stderr_msg) == -1)
 		TRACE_ERRNO("zmq_msg_close() failed");
 	return rc;
 }
