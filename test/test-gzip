@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use File::Spec::Functions;
+use File::Temp qw(&tempdir);
+
+use autodie qw(:all);
+
+my $size = shift or die;
+
+my $dir = tempdir(CLEANUP => 1);
+my $infile = catfile($dir, "infile");
+system("head -c ${size} /dev/urandom > ${infile}");
+
+my $endpoint = "tcp://0.0.0.0:5555";
+my $daemon_pid = fork();
+if ($daemon_pid == 0) {
+	exec("fssh-daemon", $endpoint, "gzip");
+}
+
+my $outfile = catfile($dir, "outfile");
+system("cat ${infile} | fssh-client ${endpoint} > ${outfile}");
+waitpid($daemon_pid, 0);
+unless (WIFEXITED($?) && WEXITSTATUS($?) == 0) { die "fssh-daemon failed"; }
+system("cat ${outfile} | gunzip | diff ${infile} -");
