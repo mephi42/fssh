@@ -3,26 +3,41 @@ use strict;
 use warnings;
 use File::Spec::Functions;
 use File::Temp qw(&tempdir);
+use Getopt::Long;
 use POSIX;
+use Time::HiRes qw(&time);
 
 use autodie qw(:all);
 
+my $no_fssh;
+GetOptions("no-fssh" => \$no_fssh) or die;
 my $size = shift or die;
 
 my $dir = tempdir(CLEANUP => 1);
 my $infile = catfile($dir, "infile");
-system("head -c ${size} /dev/urandom >${infile}");
-
-my $endpoint = "tcp://0.0.0.0:5555";
-my $daemon_pid = fork();
-if ($daemon_pid == 0) {
-	exec("fssh-daemon", $endpoint, "bash", "-c", "gzip | tee >(cat >&2)");
-}
-
 my $outfile1 = catfile($dir, "outfile1");
 my $outfile2 = catfile($dir, "outfile2");
-system("cat ${infile} | fssh-client ${endpoint} >${outfile1} 2>${outfile2}");
-waitpid($daemon_pid, 0);
-unless (WIFEXITED($?) && WEXITSTATUS($?) == 0) { die "fssh-daemon failed"; }
+my $endpoint = "tcp://0.0.0.0:5555";
+
+my $start_time = time();
+if ($no_fssh)
+{
+	system("bash", "-c", "head -c ${size} /dev/urandom | tee ${infile} | gzip | tee >(cat >${outfile2}) >${outfile1}");
+}
+else
+{
+	my $daemon_pid = fork();
+	if ($daemon_pid == 0) {
+		exec("fssh-daemon", $endpoint, "bash", "-c", "gzip | tee >(cat >&2)");
+	}
+
+	system("head -c ${size} /dev/urandom | tee ${infile} | fssh-client ${endpoint} >${outfile1} 2>${outfile2}");
+	waitpid($daemon_pid, 0);
+	unless (WIFEXITED($?) && WEXITSTATUS($?) == 0) { die "fssh-daemon failed"; }
+}
+my $duration = time() - $start_time;
+
 system("cat ${outfile1} | gunzip | diff ${infile} -");
 system("cat ${outfile2} | gunzip | diff ${infile} -");
+
+print "${duration}\n";
