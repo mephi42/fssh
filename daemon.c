@@ -97,9 +97,9 @@ static int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 
 static int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char msg_type)
 {
-	if (*msg_valid)
-		return 0;
 	while (1) {
+		if (*msg_valid)
+			return 0;
 		const size_t bufsize = 4096;
 		char *buf = malloc(bufsize);
 		if (buf == NULL) {
