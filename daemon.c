@@ -183,9 +183,6 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 	int stderr_msg_valid = 0;
 
 	while (1) {
-		if (stdin_pipe[1] == -1 && stdout_pipe[0] == -1 && stderr_pipe[0] == -1)
-			break;
-
 		zmq_pollitem_t items[4];
 		zmq_pollitem_t *item = items;
 
@@ -214,14 +211,17 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 		}
 
 		zmq_pollitem_t *socket_item = NULL;
-		short socket_events = ((stdout_msg_valid && stderr_msg_valid) ? 0 : ZMQ_POLLOUT) |
-		                      (stdin_msg_pos ? 0 : ZMQ_POLLIN);
+		short socket_events = ((stdout_msg_valid && stderr_msg_valid) ? ZMQ_POLLOUT : 0) |
+		                      (stdin_msg_pos ? ZMQ_POLLIN : 0);
 		if (socket_events) {
 			socket_item = item++;
 			socket_item->socket = socket;
 			socket_item->fd = -1;
 			socket_item->events = socket_events;
 		}
+
+		if (item == items)
+			break;
 
 		while (1) {
 			if (zmq_poll(items, item - items, -1) == -1) {
@@ -330,7 +330,12 @@ _out_wait:
 		TRACE_ERRNO("waitpid(%i) failed", pid);
 	} else if (rc == 0) {
 		TRACE("%s (%i) exited with status %i", argv[0], pid, status);
-		if (socket_write_exit(socket, status) == -1)
+		int code;
+		if (WIFEXITED(status))
+			code = WEXITSTATUS(status);
+		else
+			code = 1;
+		if (socket_write_exit(socket, code) == -1)
 			rc = -1;
 	}
 

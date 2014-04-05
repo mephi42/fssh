@@ -17,7 +17,7 @@ static int writeall(int fd, const void *buf, size_t count)
 	return 0;
 }
 
-static int forward(void *socket, int *status)
+static int forward(void *socket, int *code)
 {
 	int rc = -1;
 
@@ -47,7 +47,7 @@ static int forward(void *socket, int *status)
 			if (writeall(STDERR_FILENO, msg_data + 1, msg_size - 1) == -1)
 				goto _out_free_msg;
 		} else if(msg_data[0] == msg_type_exit) {
-			*status = (int)(*(uint32_t*)&msg_data[1]);
+			*code = (int)(*(uint32_t*)&msg_data[1]);
 			break;
 		} else {
 			TRACE("message with unexpected type received");
@@ -91,11 +91,11 @@ int main(int argc, char **argv)
 		goto _out_free_socket;
 	}
 
-	int status = 1;
-	if (forward(socket, &status) == -1)
+	int code = 1;
+	if (forward(socket, &code) == -1)
 		goto _out_free_socket;
 
-	rc = status;
+	rc = code;
 
 _out_free_socket:
 	if (zmq_close(socket) == -1)
