@@ -105,7 +105,7 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 
 		zmq_pollitem_t *socket_item = NULL;
 		short socket_events = (stdin_msg_valid ? ZMQ_POLLOUT : 0) |
-		                      (((*stdout_fd == -1 && *stderr_fd == -1) || stdouterr_msg_pos) ? 0 : ZMQ_POLLIN);
+		                      (stdouterr_msg_pos ? 0 : ZMQ_POLLIN);
 		if (socket_events) {
 			socket_item = item++;
 			socket_item->socket = socket;
@@ -113,13 +113,15 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 			socket_item->events = socket_events;
 		}
 
+		if (item == items) {
+			TRACE("nothing to poll, exiting");
+			break;
+		}
+
 		TRACE("polling:%s%s%s%s", stdin_item ? " stdin" : "",
 		                          stdout_item ? " stdout" : "",
 		                          stderr_item ? " stderr" : "",
 		                          socket_item ? " socket" : "");
-
-		if (item == items)
-			break;
 
 		while (1) {
 			if (zmq_poll(items, item - items, -1) == -1) {

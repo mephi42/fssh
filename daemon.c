@@ -181,8 +181,16 @@ static int forward(pid_t pid, int *sigchld_fd, int stdin_pipe[2], int stdout_pip
 			sigchld_item->events = ZMQ_POLLIN | ZMQ_POLLERR;
 		}
 
-		if (item == items)
+		if (item == items) {
+			TRACE("nothing to poll, exiting");
 			break;
+		}
+
+		TRACE("polling:%s%s%s%s%s", stdin_item ? " stdin" : "",
+		                            stdout_item ? " stdout" : "",
+		                            stderr_item ? " stderr" : "",
+		                            socket_item ? " socket" : "",
+		                            sigchld_item ? " sigchld" : "");
 
 		while (1) {
 			if (zmq_poll(items, item - items, -1) == -1) {
