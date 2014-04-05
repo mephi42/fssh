@@ -92,7 +92,7 @@ static int on_sigchld(int *sigchld_fd, pid_t pid, int *stdin_fd)
 		TRACE_ERRNO("read(%i, %p, %zu) failed", *sigchld_fd, &si, sizeof(si));
 		return -1;
 	}
-	if (si.ssi_pid != pid)
+	if (si.ssi_signo != SIGCHLD || si.ssi_code != CLD_EXITED || si.ssi_pid != pid)
 		return 0;
 	if (close(*sigchld_fd) == -1)
 		TRACE_ERRNO("close(%i) failed", *sigchld_fd);
@@ -103,7 +103,7 @@ static int on_sigchld(int *sigchld_fd, pid_t pid, int *stdin_fd)
 	return 0;
 }
 
-static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_pipe[2], void *socket)
+static int forward(pid_t pid, int *sigchld_fd, int stdin_pipe[2], int stdout_pipe[2], int stderr_pipe[2], void *socket)
 {
 	int rc = -1;
 
@@ -127,26 +127,11 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 	int stderr_msg_valid = 0;
 
 	if (make_nonblocking(stdin_pipe[1]) == -1)
-		goto _out_free_msg;
+		goto _out;
 	if (make_nonblocking(stdout_pipe[0]) == -1)
-		goto _out_free_msg;
+		goto _out;
 	if (make_nonblocking(stderr_pipe[0]) == -1)
-		goto _out_free_msg;
-
-	sigset_t sigchld;
-	if (sigemptyset(&sigchld) == -1) {
-		TRACE_ERRNO("sigemptyset() failed");
-		goto _out_free_msg;
-	}
-	if (sigaddset(&sigchld, SIGCHLD) == -1) {
-		TRACE_ERRNO("sigaddset() failed");
-		goto _out_free_msg;
-	}
-	int sigchld_fd = signalfd(-1, &sigchld, SFD_NONBLOCK);
-	if (sigchld_fd == -1) {
-		TRACE_ERRNO("signalfd() failed");
-		goto _out_free_msg;
-	}
+		goto _out;
 
 	while (1) {
 		zmq_pollitem_t items[5];
@@ -187,10 +172,10 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 		}
 
 		zmq_pollitem_t *sigchld_item = NULL;
-		if (sigchld_fd != -1) {
+		if (*sigchld_fd != -1) {
 			sigchld_item = item++;
 			sigchld_item->socket = NULL;
-			sigchld_item->fd = sigchld_fd;
+			sigchld_item->fd = *sigchld_fd;
 			sigchld_item->events = ZMQ_POLLIN | ZMQ_POLLERR;
 		}
 
@@ -226,17 +211,13 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 			if (on_socket_readable(socket, &stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
 				goto _out;
 		if (sigchld_item && (sigchld_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
-			if (on_sigchld(&sigchld_fd, pid, &stdin_pipe[1]) == -1)
+			if (on_sigchld(sigchld_fd, pid, &stdin_pipe[1]) == -1)
 				goto _out;
 	}
 
 	rc = 0;
 
 _out:
-	if (sigchld_fd != -1 && close(sigchld_fd) == -1)
-		TRACE_ERRNO("close(%i) failed", sigchld_fd);
-
-_out_free_msg:
 	if (stdin_msg_pos && zmq_msg_close(&stdin_msg) == -1)
 		TRACE_ERRNO("zmq_msg_close() failed");
 	if (stdout_msg_valid && zmq_msg_close(&stdout_msg) == -1)
@@ -290,15 +271,39 @@ static int execute_and_forward(char **argv, void *socket)
 		goto _out_free_stdout;
 	}
 
+	sigset_t sigchld;
+	if (sigemptyset(&sigchld) == -1) {
+		TRACE_ERRNO("sigemptyset() failed");
+		goto _out_free_stderr;
+	}
+	if (sigaddset(&sigchld, SIGCHLD) == -1) {
+		TRACE_ERRNO("sigaddset() failed");
+		goto _out_free_stderr;
+	}
+	if (sigprocmask(SIG_BLOCK, &sigchld, NULL) == -1) {
+		TRACE_ERRNO("sigprocmask() failed");
+		goto _out_free_stderr;
+	}
+	int sigchld_fd = signalfd(-1, &sigchld, SFD_NONBLOCK | SFD_CLOEXEC);
+	if (sigchld_fd == -1) {
+		TRACE_ERRNO("signalfd() failed");
+		goto _out_free_stderr;
+	}
+
 	pid_t pid = fork();
 	if (pid == -1) {
 		TRACE_ERRNO("fork() failed");
-		goto _out_free_stderr;
+		goto _out_close_sigchld_fd;
 	}
-	if (pid == 0)
+	if (pid == 0) {
+		if (sigprocmask(SIG_UNBLOCK, &sigchld, NULL) == -1) {
+			TRACE_ERRNO("sigprocmask() failed");
+			_exit(1);
+		}
 		execute(argv, stdin_pipe, stdout_pipe, stderr_pipe);
+	}
 
-	if (forward(pid, stdin_pipe, stdout_pipe, stderr_pipe, socket) == -1)
+	if (forward(pid, &sigchld_fd, stdin_pipe, stdout_pipe, stderr_pipe, socket) == -1)
 		goto _out_wait;
 
 	rc = 0;
@@ -319,6 +324,10 @@ _out_wait:
 		if (socket_write_exit(socket, code) == -1)
 			rc = -1;
 	}
+
+_out_close_sigchld_fd:
+	if (sigchld_fd != -1 && close(sigchld_fd) == -1)
+		TRACE_ERRNO("close(%i) failed", sigchld_fd);
 
 _out_free_stderr:
 	if (stderr_pipe[0] != -1 && close(stderr_pipe[0]) == -1)
