@@ -53,21 +53,27 @@ static void zmq_free_wrapper(void *data, void *hint)
 	free(data);
 }
 
-static int fd_write(int fd, zmq_msg_t *msg, size_t *msg_pos)
+static int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 {
 	if (!*msg_pos)
 		return 0;
 	char *msg_data = zmq_msg_data(msg);
 	size_t msg_size = zmq_msg_size(msg);
-	while (*msg_pos != msg_size) {
-		ssize_t count = write(fd, msg_data + *msg_pos, msg_size - *msg_pos);
-		if (count == -1) {
-			if (errno == EAGAIN)
-				return 0;
-			TRACE_ERRNO("write(%i, %p, %zu) failed", fd, msg_data + *msg_pos, msg_size - *msg_pos);
-			return -1;
+	if (msg_size == 1) {
+		if (close(*fd) == -1)
+			TRACE_ERRNO("close(%i) failed", *fd);
+		*fd = -1;
+	} else {
+		while (*msg_pos != msg_size) {
+			ssize_t count = write(*fd, msg_data + *msg_pos, msg_size - *msg_pos);
+			if (count == -1) {
+				if (errno == EAGAIN)
+					return 0;
+				TRACE_ERRNO("write(%i, %p, %zu) failed", *fd, msg_data + *msg_pos, msg_size - *msg_pos);
+				return -1;
+			}
+			*msg_pos += count;
 		}
-		*msg_pos += count;
 	}
 	if (zmq_msg_close(msg) == -1)
 		TRACE_ERRNO("zmq_msg_close() failed");
@@ -128,7 +134,7 @@ static int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid,
 	}
 }
 
-int on_socket_readable(void *socket, int stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
+int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
 {
 	while (1) {
 		if (*stdin_msg_pos)
@@ -211,8 +217,8 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 		}
 
 		zmq_pollitem_t *socket_item = NULL;
-		short socket_events = ((stdout_msg_valid && stderr_msg_valid) ? ZMQ_POLLOUT : 0) |
-		                      (stdin_msg_pos ? ZMQ_POLLIN : 0);
+		short socket_events = ((stdout_msg_valid || stderr_msg_valid) ? ZMQ_POLLOUT : 0) |
+		                      ((stdin_pipe[1] == -1 || stdin_msg_pos) ? 0 : ZMQ_POLLIN);
 		if (socket_events) {
 			socket_item = item++;
 			socket_item->socket = socket;
@@ -234,7 +240,7 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 		}
 
 		if (stdin_item && (stdin_item->revents & (ZMQ_POLLOUT | ZMQ_POLLERR)))
-			if (fd_write(stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
+			if (fd_write(&stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
 				goto _out;
 		if (socket_item && (socket_item->revents & ZMQ_POLLOUT)) {
 			if (socket_write(socket, &stdout_msg, &stdout_msg_valid) == -1)
@@ -249,7 +255,7 @@ static int forward(pid_t pid, int stdin_pipe[2], int stdout_pipe[2], int stderr_
 			if (on_fd_readable(&stderr_pipe[0], socket, &stderr_msg, &stderr_msg_valid, msg_type_stderr) == -1)
 				goto _out;
 		if (socket_item && (socket_item->revents & ZMQ_POLLIN))
-			if (on_socket_readable(socket, stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
+			if (on_socket_readable(socket, &stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
 				goto _out;
 	}
 

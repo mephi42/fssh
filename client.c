@@ -17,6 +17,24 @@ static int writeall(int fd, const void *buf, size_t count)
 	return 0;
 }
 
+static int send_stdin_eof(void *socket)
+{
+	zmq_msg_t msg;
+	if (zmq_msg_init_size(&msg, 1) == -1) {
+		TRACE_ERRNO("zmq_msg_init_size() failed");
+		return -1;
+	}
+	char *msg_data = zmq_msg_data(&msg);
+	msg_data[0] = msg_type_stdin;
+	if (zmq_msg_send(&msg, socket, 0) == -1) {
+		TRACE_ERRNO("zmq_msg_send() failed");
+		if (zmq_msg_close(&msg) == -1)
+			TRACE_ERRNO("zmq_msg_close() failed");
+		return -1;
+	}
+	return 0;
+}
+
 static int forward(void *socket, int *code)
 {
 	int rc = -1;
@@ -90,6 +108,9 @@ int main(int argc, char **argv)
 		TRACE_ERRNO("zmq_connect(%p, %s) failed", socket, argv[1]);
 		goto _out_free_socket;
 	}
+
+	if (send_stdin_eof(socket) == -1)
+		goto _out_free_socket;
 
 	int code = 1;
 	if (forward(socket, &code) == -1)
