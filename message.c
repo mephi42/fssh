@@ -39,8 +39,10 @@ _out:
 	return rc;
 }
 
-static int reset_fd(int *fd)
+int reset_fd(int *fd)
 {
+	if (*fd == -1)
+		return 0;
 	if (*fd == STDIN_FILENO || *fd == STDOUT_FILENO || *fd == STDERR_FILENO)
 		return reset_std_fd(fd, (*fd == STDIN_FILENO) ? O_RDONLY : O_WRONLY);
 	if (close(*fd))
@@ -71,6 +73,7 @@ int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char m
 			free(buf);
 			return -1;
 		}
+		TRACE("read data for message, type=%i, size=%zd", (int)msg_type, count);
 		if (zmq_msg_init_data(msg, buf, count + 1, zmq_free_wrapper, NULL) == -1) {
 			TRACE_ERRNO("zmq_msg_init_data() failed");
 			free(buf);
@@ -88,12 +91,13 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 {
 	if (!*msg_pos)
 		return 0;
-	char *msg_data = zmq_msg_data(msg);
 	size_t msg_size = zmq_msg_size(msg);
+	char *msg_data = zmq_msg_data(msg);
+	char msg_type = ((char*)zmq_msg_data(msg))[0];
 	if (msg_size == 1) {
-		if (close(*fd) == -1)
-			TRACE_ERRNO("close(%i) failed", *fd);
-		*fd = -1;
+		if (reset_fd(fd) == -1)
+			return -1;
+		TRACE("closed stream, type=%i", (int)msg_type);
 	} else {
 		while (*msg_pos != msg_size) {
 			ssize_t count = write(*fd, msg_data + *msg_pos, msg_size - *msg_pos);
@@ -103,6 +107,7 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 				TRACE_ERRNO("write(%i, %p, %zu) failed", *fd, msg_data + *msg_pos, msg_size - *msg_pos);
 				return -1;
 			}
+			TRACE("wrote data from message, type=%i, size=%zd", (int)msg_type, count);
 			*msg_pos += count;
 		}
 	}
@@ -116,12 +121,15 @@ int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 {
 	if (!*msg_valid)
 		return 0;
+	size_t msg_size = zmq_msg_size(msg);
+	char msg_type = ((char*)zmq_msg_data(msg))[0];
 	if (zmq_msg_send(msg, socket, ZMQ_DONTWAIT) == -1) {
 		if (errno == EAGAIN)
 			return 0;
 		TRACE_ERRNO("zmq_msg_write() failed");
 		return -1;
 	}
+	TRACE("sent message, type=%i, size=%zu", (int)msg_type, msg_size);
 	*msg_valid = 0;
 	return 0;
 }

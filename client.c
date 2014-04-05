@@ -28,6 +28,7 @@ static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_
 		}
 		char *msg_data = zmq_msg_data(msg);
 		char msg_type = msg_data[0];
+		TRACE("received message, type=%i, size=%zu", (int)msg_type, msg_size);
 		switch (msg_type) {
 		case msg_type_stdout:
 			*msg_pos = 1;
@@ -46,6 +47,7 @@ static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_
 			}
 			*exited = 1;
 			*code = (int)(*(uint32_t*)&msg_data[1]);
+			TRACE("this is exit message, code=%i", *code);
 			if (zmq_msg_close(msg) == -1)
 				TRACE("zmq_msg_close() failed");
 			*msg_pos = 0;
@@ -111,6 +113,11 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 			socket_item->events = socket_events;
 		}
 
+		TRACE("polling:%s%s%s%s", stdin_item ? " stdin" : "",
+		                          stdout_item ? " stdout" : "",
+		                          stderr_item ? " stderr" : "",
+		                          socket_item ? " socket" : "");
+
 		if (item == items)
 			break;
 
@@ -136,7 +143,7 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 		if (stdin_item && (stdin_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
 			if (on_fd_readable(stdin_fd, socket, &stdin_msg, &stdin_msg_valid, msg_type_stdin) == -1)
 				goto _out;
-		int exited;
+		int exited = 0;
 		if (socket_item && (socket_item->revents & ZMQ_POLLIN))
 			if (on_socket_readable(socket, stdout_fd, stderr_fd, &stdouterr_msg, &stdouterr_msg_pos, &exited, code) == -1)
 				goto _out;

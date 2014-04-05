@@ -66,11 +66,14 @@ static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg,
 			TRACE_ERRNO("zmq_msg_recv() failed");
 			return -1;
 		}
-		if (zmq_msg_size(stdin_msg) == 0) {
+		size_t msg_size = zmq_msg_size(stdin_msg);
+		if (msg_size == 0) {
 			TRACE("empty message received");
 			return -1;
 		}
 		char *msg_data = zmq_msg_data(stdin_msg);
+		char msg_type = msg_data[0];
+		TRACE("received message, type=%i, size=%zu", (int)msg_type, msg_size);
 		if (msg_data[0] == msg_type_stdin) {
 			*stdin_msg_pos = 1;
 			if (fd_write(stdin_fd, stdin_msg, stdin_msg_pos) == -1)
@@ -92,14 +95,13 @@ static int on_sigchld(int *sigchld_fd, pid_t pid, int *stdin_fd)
 		TRACE_ERRNO("read(%i, %p, %zu) failed", *sigchld_fd, &si, sizeof(si));
 		return -1;
 	}
+	TRACE("signal received: signo=%i, code=%i, pid=%i", si.ssi_signo, si.ssi_code, si.ssi_pid);
 	if (si.ssi_signo != SIGCHLD || si.ssi_code != CLD_EXITED || si.ssi_pid != pid)
 		return 0;
-	if (close(*sigchld_fd) == -1)
-		TRACE_ERRNO("close(%i) failed", *sigchld_fd);
-	*sigchld_fd = -1;
-	if (*stdin_fd != -1 && close(*stdin_fd) == -1)
-		TRACE_ERRNO("close(%i) failed", *stdin_fd);
-	*stdin_fd = -1;
+	if (reset_fd(sigchld_fd) == -1)
+		return -1;
+	if (reset_fd(stdin_fd) == -1)
+		return -1;
 	return 0;
 }
 
@@ -227,7 +229,7 @@ _out:
 	return rc;
 }
 
-static int socket_write_exit(void *socket, int status)
+static int socket_write_exit(void *socket, int code)
 {
 	zmq_msg_t msg;
 	if (zmq_msg_init_size(&msg, 5) == -1) {
@@ -237,7 +239,7 @@ static int socket_write_exit(void *socket, int status)
 
 	char *data = zmq_msg_data(&msg);
 	data[0] = msg_type_exit;
-	*(int32_t*)&data[1] = (int32_t)status;
+	*(int32_t*)&data[1] = (int32_t)code;
 
 	if (zmq_msg_send(&msg, socket, 0) == -1) {
 		TRACE_ERRNO("zmq_msg_send() failed");
@@ -245,6 +247,7 @@ static int socket_write_exit(void *socket, int status)
 			TRACE_ERRNO("zmq_msg_close() failed");
 		return -1;
 	}
+	TRACE("sent exit message, code=%i", code);
 
 	return 0;
 }

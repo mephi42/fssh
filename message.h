@@ -10,6 +10,7 @@ enum msg_type {
 	msg_type_exit = 3,
 };
 
+int reset_fd(int *fd);
 int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char msg_type);
 int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos);
 int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid);
