@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
@@ -248,7 +249,7 @@ static int socket_write_exit(void *socket, int code)
 
 	char *data = zmq_msg_data(&msg);
 	data[0] = msg_type_exit;
-	*(int32_t*)&data[1] = (int32_t)code;
+	*(uint32_t*)&data[1] = htonl((uint32_t)code);
 
 	if (zmq_msg_send(&msg, socket, 0) == -1) {
 		TRACE_ERRNO("zmq_msg_send() failed");

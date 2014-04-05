@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include "message.h"
 #include "nonblock.h"
 #include <stdio.h>
@@ -46,7 +47,7 @@ static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_
 				return -1;
 			}
 			*exited = 1;
-			*code = (int)(*(uint32_t*)&msg_data[1]);
+			*code = (int)ntohl(*(uint32_t*)&msg_data[1]);
 			TRACE("this is exit message, code=%i", *code);
 			if (zmq_msg_close(msg) == -1)
 				TRACE("zmq_msg_close() failed");
