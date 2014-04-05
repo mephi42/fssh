@@ -5,13 +5,13 @@
 
 int make_nonblocking(int fd)
 {
-	int flags = fcntl(fd, F_GETFD);
+	int flags = fcntl(fd, F_GETFL);
 	if (flags == -1) {
-		TRACE_ERRNO("fcntl(%d, F_GETFD) failed", fd);
+		TRACE_ERRNO("fcntl(%d, F_GETFL) failed", fd);
 		return -1;
 	}
-	if (fcntl(fd, F_SETFD, flags | O_NONBLOCK) == -1) {
-		TRACE_ERRNO("fcntl(%d, F_SETFD) failed", fd);
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+		TRACE_ERRNO("fcntl(%d, F_SETFL) failed", fd);
 		return -1;
 	}
 	return 0;

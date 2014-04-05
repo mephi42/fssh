@@ -134,6 +134,7 @@ static int forward(pid_t pid, int *sigchld_fd, int stdin_pipe[2], int stdout_pip
 		goto _out;
 	if (make_nonblocking(stderr_pipe[0]) == -1)
 		goto _out;
+	TRACE("made nonblocking: %i, %i, %i", stdin_pipe[1], stdout_pipe[0], stderr_pipe[0]);
 
 	while (1) {
 		zmq_pollitem_t items[5];
@@ -269,18 +270,21 @@ static int execute_and_forward(char **argv, void *socket)
 		TRACE_ERRNO("pipe(stdin_pipe) failed");
 		goto _out;
 	}
+	TRACE("stdin=(r=%i, w=%i)", stdin_pipe[0], stdin_pipe[1]);
 
 	int stdout_pipe[2];
 	if (pipe(stdout_pipe) == -1) {
 		TRACE_ERRNO("pipe(stdout_pipe) failed");
 		goto _out_free_stdin;
 	}
+	TRACE("stdout=(r=%i, w=%i)", stdout_pipe[0], stdout_pipe[1]);
 
 	int stderr_pipe[2];
 	if (pipe(stderr_pipe) == -1) {
 		TRACE_ERRNO("pipe(stderr_pipe) failed");
 		goto _out_free_stdout;
 	}
+	TRACE("stderr=(r=%i, w=%i)", stderr_pipe[0], stderr_pipe[1]);
 
 	sigset_t sigchld;
 	if (sigemptyset(&sigchld) == -1) {
