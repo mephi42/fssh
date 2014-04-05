@@ -11,16 +11,18 @@ my $size = shift or die;
 
 my $dir = tempdir(CLEANUP => 1);
 my $infile = catfile($dir, "infile");
-system("head -c ${size} /dev/urandom > ${infile}");
+system("head -c ${size} /dev/urandom >${infile}");
 
 my $endpoint = "tcp://0.0.0.0:5555";
 my $daemon_pid = fork();
 if ($daemon_pid == 0) {
-	exec("fssh-daemon", $endpoint, "gzip");
+	exec("fssh-daemon", $endpoint, "bash", "-c", "gzip | tee >(cat >&2)");
 }
 
-my $outfile = catfile($dir, "outfile");
-system("cat ${infile} | fssh-client ${endpoint} > ${outfile}");
+my $outfile1 = catfile($dir, "outfile1");
+my $outfile2 = catfile($dir, "outfile2");
+system("cat ${infile} | fssh-client ${endpoint} >${outfile1} 2>${outfile2}");
 waitpid($daemon_pid, 0);
 unless (WIFEXITED($?) && WEXITSTATUS($?) == 0) { die "fssh-daemon failed"; }
-system("cat ${outfile} | gunzip | diff ${infile} -");
+system("cat ${outfile1} | gunzip | diff ${infile} -");
+system("cat ${outfile2} | gunzip | diff ${infile} -");
