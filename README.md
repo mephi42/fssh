@@ -1,6 +1,7 @@
-`fssh` - execute program via SSH, while tolerating TCP connection losses
+`fssh` - execute program via SSH, surviving TCP connection losses
 
-Implementation is work in progress.
+###### Usage:
+`fssh [SSH_OPTIONS] [USER@]HOSTNAME PGM [ARGS]...`
 
 ###### Executables:
 - `fssh` - `ssh` drop-in replacement, that forks `ssh fssh-fwd` and `fssh-client`
@@ -25,6 +26,6 @@ Four types of zeromq messages are defined:
 - exit code (sent from client to daemon): byte `0x03` followed by exit code encoded as big-endian `uint32_t`
 
 ###### Dependencies:
-- `openssh` (http://www.openssh.com/)
-- `zeromq` (http://zeromq.org/)
-- `LTTng` (http://lttng.org/)
+- `openssh` (required, http://www.openssh.com/)
+- `zeromq` (required, http://zeromq.org/)
+- `LTTng` (optional, http://lttng.org/)
