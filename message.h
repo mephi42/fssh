@@ -1,7 +1,7 @@
 #ifndef FSSH_MESSAGE_H
 #define FSSH_MESSAGE_H
 
-#include <zmq.h>
+#include "anyzmq.h"
 
 enum msg_type {
 	msg_type_stdin = 0,

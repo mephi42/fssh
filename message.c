@@ -1,3 +1,4 @@
+#include "anyzmq.h"
 #include <errno.h>
 #include <fcntl.h>
 #include "message.h"
@@ -7,7 +8,6 @@
 #include <sys/stat.h>
 #include "trace.h"
 #include <unistd.h>
-#include <zmq.h>
 
 int get_msg_type(zmq_msg_t *msg)
 {

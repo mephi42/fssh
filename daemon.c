@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include "anyzmq.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -13,7 +14,6 @@
 #include "reset.h"
 #include "trace.h"
 #include <unistd.h>
-#include <zmq.h>
 
 __attribute__((noreturn)) static void execute(char **argv, int stdin_pipe[2], int stdout_pipe[2], int stderr_pipe[2])
 {

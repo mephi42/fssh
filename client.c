@@ -1,3 +1,4 @@
+#include "anyzmq.h"
 #include <arpa/inet.h>
 #include "message.h"
 #include "nonblock.h"
@@ -5,7 +6,6 @@
 #include <stdint.h>
 #include "trace.h"
 #include <unistd.h>
-#include <zmq.h>
 
 static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_msg_t *msg, size_t *msg_pos, int *exited, int *code)
 {
