@@ -1,3 +1,5 @@
+version = '0.1'
+
 env = Environment()
 env.Append(CFLAGS=['-std=c99', '-Wall', '-Werror', '-g2', '-O3'])
 env.Append(LIBS=['zmq'])
@@ -7,20 +9,61 @@ vars.Add(BoolVariable('ENABLE_LTTNG_UST', None, True))
 vars.Update(env)
 
 if env['ENABLE_LTTNG_UST']:
-	env.Append(CPPDEFINES=['ENABLE_LTTNG_UST'])
-	env.Append(LIBS=['lttng-ust'])
+    env.Append(CPPDEFINES=['ENABLE_LTTNG_UST'])
+    env.Append(LIBS=['lttng-ust'])
 
 client = env.StaticObject('client.o', 'client.c')
 daemon = env.StaticObject('daemon.o', 'daemon.c')
 fwd = env.StaticObject('fwd.o', 'fwd.c')
 main = env.StaticObject('main.o', 'main.c')
 message = env.StaticObject('message.o', 'message.c')
-reset = env.StaticObject('reset.o', 'reset.c')
 nonblock = env.StaticObject('nonblock.o', 'nonblock.c')
+reset = env.StaticObject('reset.o', 'reset.c')
 ringbuf = env.StaticObject('ringbuf.o', 'ringbuf.c')
 un = env.StaticObject('un.o', 'un.c')
 
 fssh = env.Program('fssh', [main, reset])
 fssh_client = env.Program('fssh-client', [client, message, nonblock, reset])
-fssh_fwd = env.Program('fssh-fwd', [fwd])
 fssh_daemon = env.Program('fssh-daemon', [daemon, message, nonblock, reset])
+fssh_fwd = env.Program('fssh-fwd', [fwd])
+
+
+def create_spec(target, source, env):
+    text = '''
+Name: fssh
+Summary: execute program via SSH, surviving TCP connection losses
+Version: %s
+Release: 1
+License: GPLv2
+
+%%description
+Execute program via SSH, surviving TCP connection losses.
+
+%%prep
+
+%%build
+
+%%install
+mkdir -p %%{buildroot}/usr/bin
+cp %%{_topdir}/../fssh %%{buildroot}/usr/bin
+cp %%{_topdir}/../fssh-client %%{buildroot}/usr/bin
+cp %%{_topdir}/../fssh-daemon %%{buildroot}/usr/bin
+cp %%{_topdir}/../fssh-fwd %%{buildroot}/usr/bin
+
+%%clean
+
+%%files
+%%defattr(-,root,root)
+/usr/bin/fssh
+/usr/bin/fssh-client
+/usr/bin/fssh-daemon
+/usr/bin/fssh-fwd
+''' % version
+    with open(target[0].get_abspath(), 'w') as f:
+        f.write(text)
+
+
+spec = env.Command(File('rpmbuild/SPECS/fssh.spec'), None, create_spec)
+rpm = env.Command(File('rpmbuild/RPMS/fssh.rpm'),
+                  [spec, fssh, fssh_client, fssh_daemon, fssh_fwd],
+                  'rpmbuild --define "_topdir `pwd`/rpmbuild" -bb $SOURCE')

@@ -5,3 +5,5 @@ fssh-client
 fssh-fwd
 fssh-daemon
 .sconsign.dblite
+.idea/
+rpmbuild/
