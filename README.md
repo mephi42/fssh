@@ -10,8 +10,8 @@ Implementation is work in progress.
 
 ###### Flow:
 - `fssh user@host pgm args...` forks two processes:
-	* `ssh -L localhost:32167:localhost:32167 user@host fssh-fwd tcp://localhost:32167 pgm args...` - this process is restarted if it exits
-	* `fssh-client tcp://localhost:32167` - `fssh` exits once this process exits
+	* `ssh -L localhost:32167:localhost:32168 user@host fssh-fwd tcp://127.0.0.1:32168 pgm args...` - this process is restarted if it exits
+	* `fssh-client tcp://127.0.0.1:32167` - `fssh` exits once this process exits
 - `fssh-fwd endpoint pgm args...` forks `fssh-daemon endpoint pgm args...` and goes into sleep, allowing `ssh` to do the port forwarding job.
 If another instance of `fssh-daemon` is already serving the endpoint, the forked one simply exits.
 

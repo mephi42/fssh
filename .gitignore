@@ -1,5 +1,6 @@
 *.o
 *.swp
+fssh
 fssh-client
 fssh-fwd
 fssh-daemon

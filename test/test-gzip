@@ -9,8 +9,8 @@ use Time::HiRes qw(&time);
 
 use autodie qw(:all);
 
-my $no_fssh;
-GetOptions("no-fssh" => \$no_fssh) or die;
+my $fssh = "local";
+GetOptions("fssh=s" => \$fssh) or die;
 my $size = shift or die;
 
 my $dir = tempdir(CLEANUP => 1);
@@ -20,11 +20,11 @@ my $outfile2 = catfile($dir, "outfile2");
 my $endpoint = "tcp://0.0.0.0:5555";
 
 my $start_time = time();
-if ($no_fssh)
+if ($fssh eq "none")
 {
 	system("bash", "-c", "head -c ${size} /dev/urandom | tee ${infile} | gzip | tee >(cat >${outfile2}) >${outfile1}");
 }
-else
+elsif ($fssh eq "local")
 {
 	my $daemon_pid = fork();
 	if ($daemon_pid == 0) {
@@ -35,9 +35,15 @@ else
 	waitpid($daemon_pid, 0);
 	unless (WIFEXITED($?) && WEXITSTATUS($?) == 0) { die "fssh-daemon failed"; }
 }
+elsif ($fssh eq "remote")
+{
+	system("head -c ${size} /dev/urandom | tee ${infile} | fssh localhost gzip >${outfile1} 2>${outfile2}");
+}
 my $duration = time() - $start_time;
 
 system("cat ${outfile1} | gunzip | diff ${infile} -");
-system("cat ${outfile2} | gunzip | diff ${infile} -");
+if ($fssh ne "remote") {
+	system("cat ${outfile2} | gunzip | diff ${infile} -");
+}
 
 print "${duration}\n";

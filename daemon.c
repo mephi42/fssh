@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include "message.h"
 #include "nonblock.h"
+#include "reset.h"
 #include "trace.h"
 #include <unistd.h>
 #include <zmq.h>
