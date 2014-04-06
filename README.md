@@ -12,8 +12,8 @@ Implementation is work in progress.
 - `fssh user@host pgm args...` forks two processes:
 	* `ssh -L localhost:32167:localhost:32167 user@host fssh-fwd tcp://localhost:32167 pgm args...` - this process is restarted if it exits
 	* `fssh-client tcp://localhost:32167` - `fssh` exits once this process exits
-- `fssh-fwd endpoint pgm args...` checks if endpoint exists, and if not, forks `fssh-daemon endpoint pgm args...`.
-In any case, it ultimately goes into sleep, allowing `ssh` to do the port forwarding job.
+- `fssh-fwd endpoint pgm args...` forks `fssh-daemon endpoint pgm args...` and goes into sleep, allowing `ssh` to do the port forwarding job.
+If another instance of `fssh-daemon` is already serving the endpoint, the forked one simply exits.
 
 During execution of `pgm`, `fssh`, `fssh-client` and `fssh-daemon` keep running, while `fssh-fwd` might be restarted multiple times due to TCP connection losses.
 
