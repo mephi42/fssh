@@ -9,6 +9,13 @@
 #include <unistd.h>
 #include <zmq.h>
 
+int get_msg_type(zmq_msg_t *msg)
+{
+	char *data = zmq_msg_data(msg);
+	char type = data[0];
+	return type & 0xff;
+}
+
 static void zmq_free_wrapper(void *data, void *hint)
 {
 	free(data);
@@ -56,7 +63,6 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 		return 0;
 	size_t msg_size = zmq_msg_size(msg);
 	char *msg_data = zmq_msg_data(msg);
-	char msg_type = ((char*)zmq_msg_data(msg))[0];
 	if (msg_size == 1) {
 		if (reset_fd(fd) == -1)
 			return -1;
@@ -70,7 +76,7 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 				TRACE_ERRNO("write(%i, %p, %zu) failed", *fd, msg_data + *msg_pos, msg_size - *msg_pos);
 				return -1;
 			}
-			TRACE("wrote data from message, type=%i, size=%zd", (int)msg_type, count);
+			TRACE("wrote data from message, type=%i, size=%zd", get_msg_type(msg), count);
 			*msg_pos += count;
 		}
 	}
@@ -84,15 +90,13 @@ int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 {
 	if (!*msg_valid)
 		return 0;
-	size_t msg_size = zmq_msg_size(msg);
-	char msg_type = ((char*)zmq_msg_data(msg))[0];
 	if (zmq_msg_send(msg, socket, ZMQ_DONTWAIT) == -1) {
 		if (errno == EAGAIN)
 			return 0;
 		TRACE_ERRNO("zmq_msg_write() failed");
 		return -1;
 	}
-	TRACE("sent message, type=%i, size=%zu", (int)msg_type, msg_size);
+	TRACE("sent message, type=%i, size=%zu", get_msg_type(msg), msg_size);
 	*msg_valid = 0;
 	return 0;
 }

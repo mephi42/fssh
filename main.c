@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <stdio.h>
 #include "trace.h"
 #include <unistd.h>
 

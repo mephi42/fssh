@@ -1,6 +1,14 @@
 env = Environment()
-env.Append(CFLAGS=['-std=c99', '-Wall', '-Werror', '-g3', '-O3'])
-env.Append(LIBS=['lttng-ust', 'zmq'])
+env.Append(CFLAGS=['-std=c99', '-Wall', '-Werror', '-g2', '-O3'])
+env.Append(LIBS=['zmq'])
+
+vars = Variables()
+vars.Add(BoolVariable('ENABLE_LTTNG_UST', None, True))
+vars.Update(env)
+
+if env['ENABLE_LTTNG_UST']:
+	env.Append(CPPDEFINES=['ENABLE_LTTNG_UST'])
+	env.Append(LIBS=['lttng-ust'])
 
 client = env.StaticObject('client.o', 'client.c')
 daemon = env.StaticObject('daemon.o', 'daemon.c')

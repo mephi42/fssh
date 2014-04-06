@@ -74,8 +74,7 @@ static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg,
 			return -1;
 		}
 		char *msg_data = zmq_msg_data(stdin_msg);
-		char msg_type = msg_data[0];
-		TRACE("received message, type=%i, size=%zu", (int)msg_type, msg_size);
+		TRACE("received message, type=%i, size=%zu", get_msg_type(msg), msg_size);
 		if (msg_data[0] == msg_type_stdin) {
 			*stdin_msg_pos = 1;
 			if (fd_write(stdin_fd, stdin_msg, stdin_msg_pos) == -1)
