@@ -66,7 +66,7 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 	if (msg_size == 1) {
 		if (reset_fd(fd) == -1)
 			return -1;
-		TRACE("closed stream, type=%i", (int)msg_type);
+		TRACE("closed stream, type=%i", get_msg_type(msg));
 	} else {
 		while (*msg_pos != msg_size) {
 			ssize_t count = write(*fd, msg_data + *msg_pos, msg_size - *msg_pos);
@@ -96,7 +96,7 @@ int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 		TRACE_ERRNO("zmq_msg_write() failed");
 		return -1;
 	}
-	TRACE("sent message, type=%i, size=%zu", get_msg_type(msg), msg_size);
+	TRACE("sent message, type=%i, size=%zu", get_msg_type(msg), zmq_msg_size(msg));
 	*msg_valid = 0;
 	return 0;
 }
