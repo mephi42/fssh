@@ -3,6 +3,12 @@
 ###### Usage:
 `fssh [SSH_OPTIONS] [USER@]HOSTNAME PGM [ARGS]...`
 
+###### Usage with Jenkins:
+`fssh` is useful in situations when Jenkins master frequently disconnects from Jenkins slave due to network issues.
+Normally this results in termination of running builds, but `fssh` can save the day!
+Install `fssh` on Jenkins master and Jenkins slave, and use launch method "Launch slave via execution of command on the Master" with the following command:
+`fssh user@jenkins-slave.local sh -c "\"wget --output-document=/home/user/jenkins/slave.jar http://jenkins-master.local/jnlpJars/slave.jar </dev/null >/dev/null 2>/dev/null && cd /home/user/jenkins && java -jar slave.jar\""`
+
 ###### Executables:
 - `fssh` - `ssh` drop-in replacement, that forks `ssh fssh-fwd` and `fssh-client`
 - `fssh-fwd` - volatile process that forks `fssh-daemon`
