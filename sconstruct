@@ -65,6 +65,11 @@ cp %%{_topdir}/../fssh-fwd %%{buildroot}/usr/bin
 
 
 spec = env.Command(File('rpmbuild/SPECS/fssh.spec'), None, create_spec)
-rpm = env.Command(File('rpmbuild/RPMS/.done'),
+rpm = env.Command(File('.rpm-done'),
                   [spec, fssh, fssh_client, fssh_daemon, fssh_fwd],
-                  'rpmbuild --define "_topdir `pwd`/rpmbuild" -bb $SOURCE && touch rpmbuild/RPMS/.done')
+                  ['rpmbuild --define "_topdir `pwd`/rpmbuild" -bb $SOURCE',
+                   'date --rfc-3339=ns >.rpm-done'])
+deb = env.Command(File('.deb-done'),
+                  rpm,
+                  ['fakeroot alien --to-deb `find rpmbuild/RPMS -name *.rpm`',
+                   'date --rfc-3339=ns >.deb-done'])

@@ -147,9 +147,16 @@ int main(int argc, char **argv)
 			TRACE_ERRNO("read() failed");
 			goto _out_kill;
 		}
+		TRACE("signal received: signo=%i, code=%i, pid=%i, status=%i", si.ssi_signo, si.ssi_code, si.ssi_pid, si.ssi_status);
 		if (si.ssi_signo != SIGCHLD || si.ssi_code != CLD_EXITED)
 			continue;
 		if (si.ssi_pid == ssh_pid) {
+			int status;
+			if (waitpid(ssh_pid, &status, 0) == 0) {
+				TRACE_ERRNO("waitpid(%i) failed", ssh_pid);
+				ssh_pid = -1;
+				goto _out_kill;
+			}
 			ssh_pid = fork_ssh(&sigchld, args);
 			if (ssh_pid == -1)
 				goto _out_kill;

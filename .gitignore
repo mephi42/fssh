@@ -7,3 +7,6 @@ fssh-daemon
 .sconsign.dblite
 .idea/
 rpmbuild/
+.rpm-done
+.deb-done
+fssh_*.deb
