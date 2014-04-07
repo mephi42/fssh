@@ -177,17 +177,23 @@ int main(int argc, char **argv)
 	if (context == NULL) {
 		TRACE_ERRNO("zmq_ctx_new() failed");
 		goto _out;
+	} else {
+		TRACE("zmq_ctx_new() = %p", context);
 	}
 
 	void *socket = zmq_socket(context, ZMQ_DEALER);
 	if (socket == NULL) {
 		TRACE_ERRNO("zmq_socket(%p, ZMQ_DEALER)", context);
 		goto _out_free_ctx;
+	} else {
+		TRACE("zmq_socket(%p, ZMQ_DEALER) = %p", context, socket);
 	}
 
 	if (zmq_connect(socket, argv[1]) == -1) {
 		TRACE_ERRNO("zmq_connect(%p, %s) failed", socket, argv[1]);
 		goto _out_free_socket;
+	} else {
+		TRACE("zmq_connect(%p, %s) successful", socket, argv[1]);
 	}
 
 	int stdin_fd = STDIN_FILENO;

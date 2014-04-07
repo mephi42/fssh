@@ -93,7 +93,7 @@ int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 	if (zmq_msg_send(msg, socket, ZMQ_DONTWAIT) == -1) {
 		if (errno == EAGAIN)
 			return 0;
-		TRACE_ERRNO("zmq_msg_write() failed");
+		TRACE_ERRNO("zmq_msg_send(%p) failed", socket);
 		return -1;
 	}
 	TRACE("sent message, type=%i, size=%zu", get_msg_type(msg), zmq_msg_size(msg));

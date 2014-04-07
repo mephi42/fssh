@@ -65,6 +65,6 @@ cp %%{_topdir}/../fssh-fwd %%{buildroot}/usr/bin
 
 
 spec = env.Command(File('rpmbuild/SPECS/fssh.spec'), None, create_spec)
-rpm = env.Command(File('rpmbuild/RPMS/fssh.rpm'),
+rpm = env.Command(File('rpmbuild/RPMS/.done'),
                   [spec, fssh, fssh_client, fssh_daemon, fssh_fwd],
-                  'rpmbuild --define "_topdir `pwd`/rpmbuild" -bb $SOURCE')
+                  'rpmbuild --define "_topdir `pwd`/rpmbuild" -bb $SOURCE && touch rpmbuild/RPMS/.done')
