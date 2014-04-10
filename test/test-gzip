@@ -10,22 +10,36 @@ use Time::HiRes qw(&time);
 use autodie qw(:all);
 
 my $fssh = "local";
-GetOptions("fssh=s" => \$fssh) or die;
+my $port = 5555;
+my $count = 1;
+GetOptions("fssh=s" => \$fssh, "port=s" => \$port, "count=s" => \$count) or die;
 my $size = shift or die;
+
+if ($count > 1) {
+	my @pids = ();
+	for (my $i = 0; $i < $count; ++$i) {
+		my $pid = fork();
+		if ($pid == 0) {
+			exec($0, "--fssh=${fssh}", ($fssh eq "local") ? "--port=" . ($port + $i) : (), $size);
+		}
+		print STDERR "Forked ${pid}\n";
+		push @pids, $pid;
+	}
+	my @statuses = map { waitpid($_, 0); WIFEXITED($?) ? WEXITSTATUS($?) : 1 } @pids;
+	exit((grep { $_ != 0} @statuses) ? 0 : 1);
+}
 
 my $dir = tempdir(CLEANUP => 1);
 my $infile = catfile($dir, "infile");
 my $outfile1 = catfile($dir, "outfile1");
 my $outfile2 = catfile($dir, "outfile2");
-my $endpoint = "tcp://0.0.0.0:5555";
+my $endpoint = "tcp://0.0.0.0:${port}";
 
 my $start_time = time();
-if ($fssh eq "none")
-{
+if ($fssh eq "none") {
 	system("bash", "-c", "head -c ${size} /dev/urandom | tee ${infile} | gzip | tee >(cat >${outfile2}) >${outfile1}");
 }
-elsif ($fssh eq "local")
-{
+elsif ($fssh eq "local") {
 	my $daemon_pid = fork();
 	if ($daemon_pid == 0) {
 		exec("fssh-daemon", $endpoint, "bash", "-c", "gzip | tee >(cat >&2)");
@@ -35,8 +49,7 @@ elsif ($fssh eq "local")
 	waitpid($daemon_pid, 0);
 	unless (WIFEXITED($?) && WEXITSTATUS($?) == 0) { die "fssh-daemon failed"; }
 }
-elsif ($fssh eq "remote")
-{
+elsif ($fssh eq "remote") {
 	system("head -c ${size} /dev/urandom | tee ${infile} | fssh localhost gzip >${outfile1} 2>${outfile2}");
 }
 my $duration = time() - $start_time;
