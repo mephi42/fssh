@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/file.h>
 #include <sys/signalfd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -367,6 +368,42 @@ _out:
 	return rc;
 }
 
+static int lock_ipc_endpoint(char *ipc)
+{
+	size_t ipc_len = strlen(ipc);
+	static const char suffix[] = ".lock";
+	char lock[ipc_len + sizeof(suffix)];
+	snprintf(lock, sizeof(lock), "%s%s", ipc, suffix);
+
+	int fd = open(lock, O_WRONLY | O_CLOEXEC | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+	if (fd == -1) {
+		TRACE_ERRNO("open(%s) failed", lock);
+		goto _out;
+	}
+
+	if (flock(fd, LOCK_EX | LOCK_NB) == -1) {
+		TRACE_ERRNO("flock() failed");
+		if (close(fd) == -1)
+			TRACE_ERRNO("close(%i) failed", fd);
+		fd = -1;
+		goto _out;
+	}
+
+_out:
+	return fd;
+}
+
+static int lock_endpoint(char *endpoint)
+{
+	if (endpoint[0] == 'i' &&
+	    endpoint[1] == 'p' &&
+	    endpoint[2] == 'c' &&
+	    endpoint[3] == ':' &&
+	    endpoint[4] == '/')
+		return lock_ipc_endpoint(endpoint + 5);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	int rc = 1;
@@ -375,6 +412,9 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Usage: %s ZEROMQ_ENDPOINT PGM [ARGS]...\n", argv[0]);
 		goto _out;
 	}
+
+	if (lock_endpoint(argv[1]) == -1)
+		goto _out;
 
 	void *context = zmq_ctx_new();
 	if (context == NULL) {

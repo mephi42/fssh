@@ -1,0 +1,4 @@
+#!/bin/sh
+lttng create
+lttng enable-event -u -a --loglevel=TRACE_DEBUG
+lttng start

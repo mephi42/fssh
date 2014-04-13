@@ -33,5 +33,6 @@ Four types of zeromq messages are defined:
 
 ###### Dependencies:
 - `openssh` (required, http://www.openssh.com/)
+- `socat` (required, http://www.dest-unreach.org/socat/)
 - `zeromq` (required, http://zeromq.org/)
 - `LTTng` (optional, http://lttng.org/)

@@ -94,7 +94,7 @@ int main(int argc, char **argv)
 {
 	int rc = 1;
 
-	char *args[argc + 5];
+	char *args[argc + 6];
 	int pgm_index = get_pgm_index(argc, argv);
 	if (pgm_index == -1) {
 		fprintf(stderr, "Usage: %s [SSH_OPTIONS] [USER@]HOSTNAME PGM [ARGS]...\n", argv[0]);
@@ -108,7 +108,8 @@ int main(int argc, char **argv)
 	while (argv_index < pgm_index)
 		args[args_index++] = argv[argv_index++];
 	args[args_index++] = "fssh-fwd";
-	args[args_index++] = "tcp://127.0.0.1:32168";
+	args[args_index++] = "UNIX-CONNECT:/tmp/fssh-server,retry=3";
+	args[args_index++] = "ipc:///tmp/fssh-server";
 	while (argv_index < argc)
 		args[args_index++] = argv[argv_index++];
 	args[args_index++] = NULL;
@@ -147,26 +148,29 @@ int main(int argc, char **argv)
 			TRACE_ERRNO("read() failed");
 			goto _out_kill;
 		}
-		TRACE("signal received: signo=%i, code=%i, pid=%i, status=%i", si.ssi_signo, si.ssi_code, si.ssi_pid, si.ssi_status);
-		if (si.ssi_signo != SIGCHLD || si.ssi_code != CLD_EXITED)
-			continue;
-		if (si.ssi_pid == ssh_pid) {
+		TRACE("signal received: signo=%i", si.ssi_signo);
+		while (1) {
 			int status;
-			if (waitpid(ssh_pid, &status, 0) == 0) {
-				TRACE_ERRNO("waitpid(%i) failed", ssh_pid);
-				ssh_pid = -1;
+			pid_t pid = waitpid(-1, &status, WNOHANG);
+			if (pid == -1) {
+				TRACE_ERRNO("waitpid() failed");
 				goto _out_kill;
 			}
-			ssh_pid = fork_ssh(&sigchld, args);
-			if (ssh_pid == -1)
+			if (pid == 0)
+				break;
+			TRACE("pid=%i", pid);
+			if (pid == client_pid) {
+				if (WIFEXITED(status))
+					rc = WEXITSTATUS(status);
+				else
+					rc = 1;
 				goto _out_kill;
-		}
-		if (si.ssi_pid == client_pid) {
-			if (WIFEXITED(si.ssi_status))
-				rc = WEXITSTATUS(si.ssi_status);
-			else
-				rc = 1;
-			break;
+			}
+			if (pid == ssh_pid) {
+				ssh_pid = fork_ssh(&sigchld, args);
+				if (ssh_pid == -1)
+					goto _out_kill;
+			}
 		}
 	}
 
