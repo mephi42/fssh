@@ -1,10 +1,12 @@
 #define _GNU_SOURCE
 
+#include <fcntl.h>
 #include "reset.h"
 #include <signal.h>
 #include <sys/signalfd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <stdio.h>
 #include "trace.h"
@@ -45,18 +47,64 @@ static pid_t fork_socat(sigset_t *sigchld, char **argv)
 	return pid;
 }
 
-__attribute__((noreturn)) static void exec_client()
+struct names {
+	char client_socat_address[64];
+	char client_zmq_endpoint[64];
+	char server_socat_address[64];
+	char server_zmq_endpoint[64];
+};
+
+static int init_guid(char guid[33])
+{
+	int rc = -1;
+	int fd = open("/dev/urandom", O_RDONLY);
+	if  (fd == -1) {
+		TRACE_ERRNO("open(/dev/urandom) failed");
+		goto _out;
+	}
+	char bytes[16];
+	if (read(fd, bytes, sizeof(bytes)) == -1) {
+		TRACE_ERRNO("read() failed");
+		goto _out_close;
+	}
+	for (int i = 0, j = 0; i < sizeof(bytes); ++i)
+		j += snprintf(guid + j, sizeof(guid) - j, "%.02x", (int)bytes[i] & 0xff);
+	TRACE("guid=%s", guid);
+	rc = 0;
+_out_close:
+	if (close(fd) == -1)
+		TRACE_ERRNO("close(%i) failed");
+_out:
+	return rc;
+}
+
+static int init_names(struct names *names)
+{
+	int rc = -1;
+	char guid[33];
+	if (init_guid(guid) == -1)
+		goto _out;
+	snprintf(names->client_socat_address, sizeof(names->client_socat_address), "UNIX-LISTEN:/tmp/fssh-client-%s,unlink-early", guid);
+	snprintf(names->client_zmq_endpoint, sizeof(names->client_zmq_endpoint), "ipc:///tmp/fssh-client-%s", guid);
+	snprintf(names->server_socat_address, sizeof(names->server_socat_address), "UNIX-CONNECT:/tmp/fssh-server-%s,retry=3", guid);
+	snprintf(names->server_zmq_endpoint, sizeof(names->server_zmq_endpoint), "ipc:///tmp/fssh-server-%s", guid);
+	rc = 0;
+_out:
+	return rc;
+}
+
+__attribute__((noreturn)) static void exec_client(struct names *names)
 {
 	char *args[3];
 	args[0] = "fssh-client";
-	args[1] = "ipc:///tmp/fssh-client";
+	args[1] = names->client_zmq_endpoint;
 	args[2] = NULL;
 	if (execvp(args[0], args) == -1)
 		TRACE_ERRNO("exec(%s) failed", args[0]);
 	_exit(1);
 }
 
-static pid_t fork_client(sigset_t *sigchld)
+static pid_t fork_client(sigset_t *sigchld, struct names *names)
 {
 	pid_t pid = fork();
 	if (pid == -1) {
@@ -68,7 +116,7 @@ static pid_t fork_client(sigset_t *sigchld)
                         TRACE_ERRNO("sigprocmask() failed");
                         _exit(1);
                 }
-		exec_client();
+		exec_client(names);
 	}
 	TRACE("forked fssh-client, pid=%i", pid);
 	return pid;
@@ -143,7 +191,7 @@ static int sbuf_append_string(struct sbuf *sbuf, const char *s)
 	return sbuf_append(sbuf, s, strlen(s));
 }
 
-static const char* find_special_char(const char *s)
+static const char *find_special_char(const char *s)
 {
 	for (; ; ++s) {
 		switch (*s) {
@@ -181,7 +229,7 @@ static int append_exec_arg(struct sbuf *exec_arg, const char *s)
 	}
 }
 
-static int init_exec_arg(struct sbuf *exec_arg, int argc, char **argv)
+static int init_exec_arg(struct sbuf *exec_arg, int argc, char **argv, struct names *names)
 {
 	int pgm_index = get_pgm_index(argc, argv);
 	if (pgm_index == -1) {
@@ -200,9 +248,9 @@ static int init_exec_arg(struct sbuf *exec_arg, int argc, char **argv)
 			goto _fail_reset;
 	if (append_exec_arg(exec_arg, "fssh-fwd") == -1)
 		goto _fail_reset;
-	if (append_exec_arg(exec_arg, "UNIX-CONNECT:/tmp/fssh-server,retry=3") == -1)
+	if (append_exec_arg(exec_arg, names->server_socat_address) == -1)
 		goto _fail_reset;
-	if (append_exec_arg(exec_arg, "ipc:///tmp/fssh-server") == -1)
+	if (append_exec_arg(exec_arg, names->server_zmq_endpoint) == -1)
 		goto _fail_reset;
 	while (argv_index < argc)
 		if (append_exec_arg(exec_arg, argv[argv_index++]) == -1)
@@ -239,11 +287,15 @@ int main(int argc, char **argv)
 {
 	int rc = 1;
 
+	struct names names;
+	if (init_names(&names) == -1)
+		goto _out;
+
 	char *args[4];
 	args[0] = "socat";
-	args[1] = "UNIX-LISTEN:/tmp/fssh-client,unlink-early";
+	args[1] = names.client_socat_address;
 	struct sbuf exec_arg;
-	if (init_exec_arg(&exec_arg, argc - 1, argv + 1) == -1)
+	if (init_exec_arg(&exec_arg, argc - 1, argv + 1, &names) == -1)
 		goto _out;
 	args[2] = exec_arg.s;
 	args[3] = NULL;
@@ -271,7 +323,7 @@ int main(int argc, char **argv)
 	if (socat_pid == -1)
 		goto _out_close_sigchld_fd;
 
-	pid_t client_pid = fork_client(&sigchld);
+	pid_t client_pid = fork_client(&sigchld, &names);
 	if (client_pid == -1)
 		goto _out_kill;
 
@@ -298,6 +350,7 @@ int main(int argc, char **argv)
 					rc = WEXITSTATUS(status);
 				else
 					rc = 1;
+				client_pid = -1;
 				goto _out_kill;
 			}
 			if (pid == socat_pid) {
