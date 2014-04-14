@@ -55,7 +55,7 @@ __attribute__((noreturn)) static void exec_socat(char *address)
 {
 	char *args[4];
 	args[0] = "socat";
-	args[1] = "TCP-LISTEN:32168,reuseaddr";
+	args[1] = "STDIO";
 	args[2] = address;
 	args[3] = NULL;
 
