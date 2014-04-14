@@ -114,7 +114,8 @@ static void sbuf_reset(struct sbuf *sbuf)
 	free(sbuf->s);
 }
 
-static int sbuf_ensure_capacity(struct sbuf *sbuf, size_t capacity) {
+static int sbuf_ensure_capacity(struct sbuf *sbuf, size_t capacity)
+{
 	while (capacity >= sbuf->size) {
 		char *orig = sbuf->s;
 		sbuf->s = realloc(sbuf->s, sbuf->size * 2);
@@ -166,7 +167,7 @@ static int append_exec_arg(struct sbuf *exec_arg, const char *s)
 	const char *current = s;
 	while (1) {
 		const char *next = find_special_char(current);
-		if (next != s)
+		if (next != current)
 			if (sbuf_append(exec_arg, current, next - current) == -1)
 				return -1;
 		if (*next == 0)
@@ -215,6 +216,23 @@ _fail_reset:
 	sbuf_reset(exec_arg);
 _fail:
 	return -1;
+}
+
+int terminate_process(pid_t pid)
+{
+	int rc = -1;
+	if (kill(pid, SIGKILL) == -1) {
+		TRACE_ERRNO("kill(%i) failed", pid);
+		goto _out;
+	}
+	int status;
+	if (waitpid(pid, &status, 0) == -1) {
+		TRACE_ERRNO("waitpid(%i) failed", pid);
+		goto _out;
+	}
+	rc = 0;
+_out:
+	return rc;
 }
 
 int main(int argc, char **argv)
@@ -291,20 +309,10 @@ int main(int argc, char **argv)
 	}
 
 _out_kill:
-	if (socat_pid != -1) {
-		if (kill(socat_pid, SIGKILL) == -1)
-			TRACE_ERRNO("kill(%i) failed", socat_pid);
-		int status;
-		if (waitpid(socat_pid, &status, 0) == -1)
-			TRACE_ERRNO("waitpid(%i) failed", socat_pid);
-	}
-	if (client_pid != -1) {
-		if (kill(client_pid, SIGKILL) == -1)
-			TRACE_ERRNO("kill(%i) failed", client_pid);
-		int status;
-		if (waitpid(client_pid, &status, 0) == -1)
-			TRACE_ERRNO("waitpid(%i) failed", client_pid);
-	}
+	if (socat_pid != -1)
+		terminate_process(socat_pid);
+	if (client_pid != -1)
+		terminate_process(client_pid);
 
 _out_close_sigchld_fd:
 	if (close(sigchld_fd) == -1)
