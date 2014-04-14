@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/file.h>
 #include <sys/signalfd.h>
 #include <sys/types.h>

@@ -2,6 +2,7 @@ version = '0.1'
 
 vars = Variables()
 vars.Add(BoolVariable('ENABLE_LTTNG_UST', 'Whether to use LTTng Userspace Tracer', True))
+vars.Add('CC', 'C compiler', None)
 vars.Add('CFLAGS', 'Additional C compiler flags', None)
 vars.Add('LINKFLAGS', 'Additional linker flags', None)
 
