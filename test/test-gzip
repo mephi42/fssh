@@ -65,7 +65,7 @@ sub find_ssh {
 
 my $start_time = time();
 my $gzip = "gzip";
-if (defined $rate) { $gzip .= " | pv --quiet --rate-limit ${rate}"; }
+if (defined $rate) { $gzip = "pv --quiet --rate-limit ${rate} | ${gzip}"; }
 if ($fssh eq "none") {
 	system("bash", "-c", "head -c ${size} /dev/urandom | tee ${infile} | ${gzip} | tee >(cat >${outfile2}) >${outfile1}");
 } elsif ($fssh eq "local") {

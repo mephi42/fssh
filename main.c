@@ -47,14 +47,17 @@ static pid_t fork_socat(sigset_t *sigchld, char **argv)
 	return pid;
 }
 
+#define GUID_BINARY_SIZE 16
+#define GUID_STRING_SIZE (GUID_BINARY_SIZE * 2 + 1)
+
 struct names {
-	char client_socat_address[64];
-	char client_zmq_endpoint[64];
-	char server_socat_address[64];
-	char server_zmq_endpoint[64];
+	char client_socat_address[128];
+	char client_zmq_endpoint[128];
+	char server_socat_address[128];
+	char server_zmq_endpoint[128];
 };
 
-static int init_guid(char guid[33])
+static int init_guid(char guid[GUID_STRING_SIZE])
 {
 	int rc = -1;
 	int fd = open("/dev/urandom", O_RDONLY);
@@ -62,13 +65,13 @@ static int init_guid(char guid[33])
 		TRACE_ERRNO("open(/dev/urandom) failed");
 		goto _out;
 	}
-	char bytes[16];
-	if (read(fd, bytes, sizeof(bytes)) == -1) {
+	char bytes[GUID_BINARY_SIZE];
+	if (read(fd, bytes, GUID_BINARY_SIZE) == -1) {
 		TRACE_ERRNO("read() failed");
 		goto _out_close;
 	}
-	for (int i = 0, j = 0; i < sizeof(bytes); ++i)
-		j += snprintf(guid + j, sizeof(guid) - j, "%.02x", (int)bytes[i] & 0xff);
+	for (int i = 0, j = 0; i < GUID_BINARY_SIZE; ++i)
+		j += snprintf(guid + j, GUID_STRING_SIZE - j, "%.02x", (int)bytes[i] & 0xff);
 	TRACE("guid=%s", guid);
 	rc = 0;
 _out_close:
