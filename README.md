@@ -11,25 +11,28 @@ Install `fssh` on Jenkins master and Jenkins slave, and use launch method "Launc
 
 ###### Executables:
 - `fssh` - `ssh` drop-in replacement, that forks `ssh fssh-fwd` and `fssh-client`
-- `fssh-fwd` - volatile process that forks `fssh-daemon`
-- `fssh-daemon` - forks and shepherds user-speficied executable, forwards data between executable's standard streams and user-specified zeromq endpoint
+- `fssh-fwd` - forks `fssh-daemon`, forwards data between stdin/stdout and daemon's unix socket
+- `fssh-daemon` - forks and shepherds user-speficied executable,
+  forwards data between executable's standard streams and user-specified zeromq endpoint
 - `fssh-client` - forwards data between standard streams and user-specified zeromq endpoint
 
 ###### Flow:
 - `fssh user@host pgm args...` forks two processes:
-	* `ssh -L localhost:32167:localhost:32168 user@host fssh-fwd tcp://127.0.0.1:32168 pgm args...` - this process is restarted if it exits
-	* `fssh-client tcp://127.0.0.1:32167` - `fssh` exits once this process exits
-- `fssh-fwd endpoint pgm args...` forks `fssh-daemon endpoint pgm args...` and goes into sleep, allowing `ssh` to do the port forwarding job.
-If another instance of `fssh-daemon` is already serving the endpoint, the forked one simply exits.
+	* `ssh user@host fssh-fwd ipc://tmp/fssh-server-XXX pgm args...  <>/tmp/fssh-client-XXX` - if this process exits, it is restarted
+	* `fssh-client ipc://tmp/fssh-client-XXX` - `fssh` exits once this process exits
+- `fssh-fwd ipc://tmp/fssh-server-XXX pgm args...` forks `fssh-daemon ipc://tmp/fssh-server-XXX pgm args...`
+  and forwards data between stdin/stdout and `/tmp/fssh-server-XXX`.
+  If another instance of `fssh-daemon` is already using `/tmp/fssh-server-XXX`, the forked one exits.
 
-During execution of `pgm`, `fssh`, `fssh-client` and `fssh-daemon` keep running, while `fssh-fwd` might be restarted multiple times due to TCP connection losses.
+During `pgm` execution `fssh`, `fssh-client` and `fssh-daemon` keep running,
+while `fssh-fwd` might be restarted multiple times due to TCP connection losses.
 
 ###### Protocol:
 Four types of zeromq messages are defined:
 - stdin data (sent from client to daemon): byte `0x00` followed by data, no data means EOF
 - stdout data (sent from daemon to client): byte `0x01` followed by data, no data means EOF
 - stderr data (sent from daemon to client): byte `0x02` followed by data, no data means EOF
-- exit code (sent from client to daemon): byte `0x03` followed by exit code encoded as big-endian `uint32_t`
+- exit code (sent from daemon to client): byte `0x03` followed by exit code encoded as big-endian `uint32_t`
 
 ###### Dependencies:
 - `openssh` (required, http://www.openssh.com/)

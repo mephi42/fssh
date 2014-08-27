@@ -11,54 +11,13 @@
 #include <sys/wait.h>
 #include <stdio.h>
 #include "trace.h"
+#include "un.h"
 #include <unistd.h>
-
-__attribute__((noreturn)) static void exec_socat(char **argv)
-{
-	int fd = STDIN_FILENO;
-	if (reset_fd(&fd) == -1)
-		goto _fail;
-	fd = STDOUT_FILENO;
-	if (reset_fd(&fd) == -1)
-		goto _fail;
-
-	if (execvp(argv[0], argv) == -1) {
-		TRACE_ERRNO("exec(%s) failed", argv[0]);
-		goto _fail;
-	}
-_fail:
-	_exit(1);
-}
-
-static pid_t fork_socat(sigset_t *sigchld, char **argv)
-{
-	pid_t pid = fork();
-	if (pid == -1) {
-		TRACE_ERRNO("fork() failed");
-		return -1;
-	}
-	if (pid == 0) {
-	        if (sigprocmask(SIG_UNBLOCK, sigchld, NULL) == -1) {
-	                TRACE_ERRNO("sigprocmask() failed");
-	                _exit(1);
-	        }
-		exec_socat(argv);
-	}
-	TRACE("forked ssh, pid=%i", pid);
-	return pid;
-}
 
 #define GUID_BINARY_SIZE 16
 #define GUID_STRING_SIZE (GUID_BINARY_SIZE * 2 + 1)
 
-struct names {
-	char client_socat_address[128];
-	char client_zmq_endpoint[128];
-	char server_socat_address[128];
-	char server_zmq_endpoint[128];
-};
-
-static int init_guid(char guid[GUID_STRING_SIZE])
+static int guid_init(char guid[GUID_STRING_SIZE])
 {
 	int rc = -1;
 	int fd = open("/dev/urandom", O_RDONLY);
@@ -82,19 +41,160 @@ _out:
 	return rc;
 }
 
-static int init_names(struct names *names)
+struct names {
+	char client_socket[128];
+	char client_zmq_endpoint[128];
+	char server_socat_address[128];
+	char server_zmq_endpoint[128];
+};
+
+static int names_init(struct names *names)
 {
 	int rc = -1;
 	char guid[33];
-	if (init_guid(guid) == -1)
+	if (guid_init(guid) == -1)
 		goto _out;
-	snprintf(names->client_socat_address, sizeof(names->client_socat_address), "UNIX-LISTEN:/tmp/fssh-client-%s,unlink-early", guid);
+	snprintf(names->client_socket, sizeof(names->client_socket), "/tmp/fssh-client-%s", guid);
 	snprintf(names->client_zmq_endpoint, sizeof(names->client_zmq_endpoint), "ipc:///tmp/fssh-client-%s", guid);
 	snprintf(names->server_socat_address, sizeof(names->server_socat_address), "UNIX-CONNECT:/tmp/fssh-server-%s,retry=3", guid);
 	snprintf(names->server_zmq_endpoint, sizeof(names->server_zmq_endpoint), "ipc:///tmp/fssh-server-%s", guid);
 	rc = 0;
 _out:
 	return rc;
+}
+
+static int get_nonopt_index(int argn, int argc, char **argv)
+{
+	for (int i = argn; i < argc; ++i) {
+		if (argv[i][0] != '-')
+			return i;
+		switch (argv[i][1]) {
+		case 'b': case 'c': case 'D': case 'E':
+		case 'e': case 'F': case 'I': case 'i':
+		case 'L': case 'l': case 'm': case 'O':
+		case 'o': case 'p': case 'Q': case 'R':
+		case 'S': case 'W': case 'w':
+			++i;
+			break;
+		}
+	}
+	return -1;
+}
+
+static int get_pgm_index(int argc, char **argv)
+{
+	int hostname_index = get_nonopt_index(0, argc, argv);
+	if (hostname_index == -1)
+		return -1;
+	return get_nonopt_index(hostname_index + 1, argc, argv);
+}
+
+static int ssh_command_append(struct sbuf *s, const char *arg)
+{
+	const char *current = arg, *next;
+	while ((next = strchr(current, '\'')) != NULL) {
+		if (sbuf_append(s, current, next - current) == -1)
+			return -1;
+		if (sbuf_append_string(s, "\\'") == -1)
+			return -1;
+		current = next + 1;
+	}
+	if (sbuf_append_string(s, current) == -1)
+		return -1;
+	return 0;
+}
+
+static int ssh_command_init(struct sbuf *s, const struct names *names, int argc, char **argv)
+{
+	if (sbuf_init(s, 64) == -1)
+		goto _fail;
+	if (sbuf_append_string(s, "fssh-fwd ") == -1)
+		goto _fail_reset;
+	if (sbuf_append_string(s, names->server_socat_address) == -1)
+		goto _fail_reset;
+	if (sbuf_append_string(s, " ") == -1)
+		goto _fail_reset;
+	if (sbuf_append_string(s, names->server_zmq_endpoint) == -1)
+		goto _fail_reset;
+	if (sbuf_append_string(s, " /bin/sh -c '") == -1)
+		return -1;
+	for (int i = 0; i < argc; ++i) {
+		if (i != 0 && sbuf_append_string(s, " ") == -1)
+			goto _fail_reset;
+		if (ssh_command_append(s, argv[i]) == -1)
+			goto _fail_reset;
+	}
+	if (sbuf_append_string(s, "'") == -1)
+		return -1;
+	return 0;
+
+_fail_reset:
+	sbuf_reset(s);
+_fail:
+	return -1;
+}
+
+__attribute__((noreturn)) static void exec_ssh(const char *unix_socket, const char *const *argv)
+{
+	struct sockaddr_un sa;
+	sa.sun_family = AF_UNIX;
+	strncpy(sa.sun_path, unix_socket, sizeof(sa.sun_path));
+
+	int server = un_listen(&sa);
+	if (server == -1) {
+		TRACE("un_listen(%s) failed", sa.sun_path);
+		goto _fail;
+	}
+
+	int client = accept(server, NULL, NULL);
+	if (client == -1) {
+		TRACE_ERRNO("accept(%i) failed", server);
+		goto _fail;
+	}
+
+	if (close(server) == -1)
+		TRACE_ERRNO("close(%i) failed", server);
+	server = -1;
+
+	if (dup2(client, STDIN_FILENO) == -1) {
+		TRACE_ERRNO("dup2(%i, %i) failed", client, STDIN_FILENO);
+		goto _fail;
+	}
+
+	if (dup2(client, STDOUT_FILENO) == -1) {
+		TRACE_ERRNO("dup2(%i, %i) failed", client, STDOUT_FILENO);
+		goto _fail;
+	}
+
+	if (close(client) == -1)
+		TRACE_ERRNO("close(%i) failed", client);
+	client = -1;
+
+	if (execvp(argv[0], (char**)argv) == -1) {
+		TRACE_ERRNO("exec(%s) failed", argv[0]);
+		goto _fail;
+	}
+
+_fail:
+	_exit(1);
+}
+
+static pid_t fork_ssh(sigset_t *sigchld, const char *unix_socket, const char *const *argv)
+{
+	pid_t pid = fork();
+	if (pid == -1) {
+		TRACE_ERRNO("fork() failed");
+		return -1;
+	}
+	if (pid == 0) {
+	        if (sigprocmask(SIG_UNBLOCK, sigchld, NULL) == -1) {
+	                TRACE_ERRNO("sigprocmask() failed");
+	                _exit(1);
+	        }
+		exec_ssh(unix_socket, argv);
+	}
+	TRACE("forked ssh, pid=%i", pid);
+	return pid;
 }
 
 __attribute__((noreturn)) static void exec_client(struct names *names)
@@ -126,97 +226,6 @@ static pid_t fork_client(sigset_t *sigchld, struct names *names)
 	return pid;
 }
 
-static int get_nonopt_index(int argn, int argc, char **argv)
-{
-	for (int i = argn; i < argc; ++i)
-		if (argv[i][0] != '-')
-			return i;
-	return -1;
-}
-
-static int get_pgm_index(int argc, char **argv)
-{
-	int hostname_index = get_nonopt_index(0, argc, argv);
-	if (hostname_index == -1)
-		return -1;
-	return get_nonopt_index(hostname_index + 1, argc, argv);
-}
-
-static const char *find_special_char(const char *s)
-{
-	for (; ; ++s) {
-		switch (*s) {
-		case 0:
-		case '\\': case '\'': case '"':
-		case '(': case ')':
-		case '[': case ']':
-		case '{': case '}':
-		case ' ': case ',': case ':':
-			return s;
-		}
-	}
-}
-
-static int append_exec_arg(struct sbuf *exec_arg, const char *s)
-{
-	char space = ' ';
-	if (sbuf_append(exec_arg, &space, sizeof(space)) == -1)
-		return -1;
-
-	const char *current = s;
-	while (1) {
-		const char *next = find_special_char(current);
-		if (next != current)
-			if (sbuf_append(exec_arg, current, next - current) == -1)
-				return -1;
-		if (*next == 0)
-			return 0;
-		char c[2];
-		c[0] = '\\';
-		c[1] = *next;
-		if (sbuf_append(exec_arg, c, sizeof(c)) == -1)
-			return -1;
-		current = next + 1;
-	}
-}
-
-static int init_exec_arg(struct sbuf *exec_arg, int argc, char **argv, struct names *names)
-{
-	int pgm_index = get_pgm_index(argc, argv);
-	if (pgm_index == -1) {
-		fprintf(stderr, "Usage: %s [SSH_OPTIONS] [USER@]HOSTNAME PGM [ARGS]...\n", argv[0]);
-		goto _fail;
-	}
-
-	if (sbuf_init(exec_arg, 1024) == -1)
-		goto _fail;
-	if (sbuf_append_string(exec_arg, "EXEC:ssh") == -1)
-		goto _fail_reset;
-
-	int argv_index = 0;
-	while (argv_index < pgm_index)
-		if (append_exec_arg(exec_arg, argv[argv_index++]) == -1)
-			goto _fail_reset;
-	if (append_exec_arg(exec_arg, "fssh-fwd") == -1)
-		goto _fail_reset;
-	if (append_exec_arg(exec_arg, names->server_socat_address) == -1)
-		goto _fail_reset;
-	if (append_exec_arg(exec_arg, names->server_zmq_endpoint) == -1)
-		goto _fail_reset;
-	while (argv_index < argc)
-		if (append_exec_arg(exec_arg, argv[argv_index++]) == -1)
-			goto _fail_reset;
-
-	TRACE("init_exec_arg() = %s", exec_arg->s);
-
-	return 0;
-
-_fail_reset:
-	sbuf_reset(exec_arg);
-_fail:
-	return -1;
-}
-
 int terminate_process(pid_t pid)
 {
 	int rc = -1;
@@ -236,42 +245,59 @@ _out:
 
 int main(int argc, char **argv)
 {
+	for (int i = 0; i < argc; ++i)
+	{
+		TRACE("argv[%i] = %s", i, argv[i]);
+	}
+
+	int pgmn = get_pgm_index(argc - 1, argv + 1);
+	if (pgmn == -1) {
+		fprintf(stderr, "Usage: %s [SSH_OPTIONS] [USER@]HOSTNAME PGM [ARGS]...\n", argv[0]);
+		return 1;
+	}
+	const char *ssh_argv[1 + pgmn + 2];
+
 	int rc = 1;
 
 	struct names names;
-	if (init_names(&names) == -1)
+	if (names_init(&names) == -1)
 		goto _out;
 
-	char *args[4];
-	args[0] = "socat";
-	args[1] = names.client_socat_address;
-	struct sbuf exec_arg;
-	if (init_exec_arg(&exec_arg, argc - 1, argv + 1, &names) == -1)
+	struct sbuf ssh_command;
+	if (ssh_command_init(&ssh_command, &names, argc - 1 - pgmn, argv + 1 + pgmn) == -1) {
+		TRACE("ssh_command_init() failed");
 		goto _out;
-	args[2] = exec_arg.s;
-	args[3] = NULL;
+	}
+	TRACE("ssh_command=%s", ssh_command.s);
+
+	int sshn = 0;
+	ssh_argv[sshn++] = "ssh";
+	for (int argn = 1; argn <= pgmn; )
+		ssh_argv[sshn++] = argv[argn++];
+	ssh_argv[sshn++] = ssh_command.s;
+	ssh_argv[sshn++] = NULL;
 
 	sigset_t sigchld;
 	if (sigemptyset(&sigchld) == -1) {
 	        TRACE_ERRNO("sigemptyset() failed");
-	        goto _out_free_exec_arg;
+	        goto _out_free_ssh_command;
 	}
 	if (sigaddset(&sigchld, SIGCHLD) == -1) {
 	        TRACE_ERRNO("sigaddset() failed");
-	        goto _out_free_exec_arg;
+	        goto _out_free_ssh_command;
 	}
 	if (sigprocmask(SIG_BLOCK, &sigchld, NULL) == -1) {
 	        TRACE_ERRNO("sigprocmask() failed");
-	        goto _out_free_exec_arg;
+	        goto _out_free_ssh_command;
 	}
 	int sigchld_fd = signalfd(-1, &sigchld, SFD_CLOEXEC);
 	if (sigchld_fd == -1) {
 	        TRACE_ERRNO("signalfd() failed");
-	        goto _out_free_exec_arg;
+	        goto _out_free_ssh_command;
 	}
 
-	pid_t socat_pid = fork_socat(&sigchld, args);
-	if (socat_pid == -1)
+	pid_t ssh_pid = fork_ssh(&sigchld, names.client_socket, ssh_argv);
+	if (ssh_pid == -1)
 		goto _out_close_sigchld_fd;
 
 	pid_t client_pid = fork_client(&sigchld, &names);
@@ -304,17 +330,17 @@ int main(int argc, char **argv)
 				client_pid = -1;
 				goto _out_kill;
 			}
-			if (pid == socat_pid) {
-				socat_pid = fork_socat(&sigchld, args);
-				if (socat_pid == -1)
+			if (pid == ssh_pid) {
+				ssh_pid = fork_ssh(&sigchld, names.client_socket, ssh_argv);
+				if (ssh_pid == -1)
 					goto _out_kill;
 			}
 		}
 	}
 
 _out_kill:
-	if (socat_pid != -1)
-		terminate_process(socat_pid);
+	if (ssh_pid != -1)
+		terminate_process(ssh_pid);
 	if (client_pid != -1)
 		terminate_process(client_pid);
 
@@ -322,8 +348,8 @@ _out_close_sigchld_fd:
 	if (close(sigchld_fd) == -1)
 		TRACE_ERRNO("close(%i) failed", sigchld_fd);
 
-_out_free_exec_arg:
-	sbuf_reset(&exec_arg);
+_out_free_ssh_command:
+	sbuf_reset(&ssh_command);
 
 _out:
 	return rc;

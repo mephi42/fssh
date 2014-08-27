@@ -80,7 +80,7 @@ if ($fssh eq "none") {
 } elsif ($fssh eq "remote") {
 	my $pid = fork();
 	if ($pid == 0) {
-		exec("bash", "-c", "head -c ${size} /dev/urandom | tee ${infile} | fssh localhost bash -c \"${gzip}\" >${outfile1} 2>${outfile2}");
+		exec("bash", "-c", "head -c ${size} /dev/urandom | tee ${infile} | fssh localhost \"${gzip}\" >${outfile1} 2>${outfile2}");
 	}
 	if ($kill_ssh) {
 		while (1) {

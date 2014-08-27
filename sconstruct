@@ -25,7 +25,7 @@ ringbuf = env.StaticObject('ringbuf.o', 'ringbuf.c')
 sbuf = env.StaticObject('sbuf.o', 'sbuf.c')
 un = env.StaticObject('un.o', 'un.c')
 
-fssh = env.Program('fssh', [main, reset, sbuf])
+fssh = env.Program('fssh', [main, reset, sbuf, un])
 fssh_client = env.Program('fssh-client', [client, message, nonblock, reset])
 fssh_daemon = env.Program('fssh-daemon', [daemon, message, nonblock, reset])
 fssh_fwd = env.Program('fssh-fwd', [fwd])

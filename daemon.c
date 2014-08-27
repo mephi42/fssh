@@ -407,6 +407,11 @@ static int lock_endpoint(char *endpoint)
 
 int main(int argc, char **argv)
 {
+	for (int i = 0; i < argc; ++i)
+	{
+		TRACE("argv[%i] = %s", i, argv[i]);
+	}
+
 	int rc = 1;
 
 	if (argc < 3) {
