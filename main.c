@@ -38,10 +38,10 @@ static pid_t fork_socat(sigset_t *sigchld, char **argv)
 		return -1;
 	}
 	if (pid == 0) {
-                if (sigprocmask(SIG_UNBLOCK, sigchld, NULL) == -1) {
-                        TRACE_ERRNO("sigprocmask() failed");
-                        _exit(1);
-                }
+	        if (sigprocmask(SIG_UNBLOCK, sigchld, NULL) == -1) {
+	                TRACE_ERRNO("sigprocmask() failed");
+	                _exit(1);
+	        }
 		exec_socat(argv);
 	}
 	TRACE("forked ssh, pid=%i", pid);
@@ -116,10 +116,10 @@ static pid_t fork_client(sigset_t *sigchld, struct names *names)
 		return -1;
 	}
 	if (pid == 0) {
-                if (sigprocmask(SIG_UNBLOCK, sigchld, NULL) == -1) {
-                        TRACE_ERRNO("sigprocmask() failed");
-                        _exit(1);
-                }
+	        if (sigprocmask(SIG_UNBLOCK, sigchld, NULL) == -1) {
+	                TRACE_ERRNO("sigprocmask() failed");
+	                _exit(1);
+	        }
 		exec_client(names);
 	}
 	TRACE("forked fssh-client, pid=%i", pid);
@@ -251,24 +251,24 @@ int main(int argc, char **argv)
 	args[2] = exec_arg.s;
 	args[3] = NULL;
 
-        sigset_t sigchld;
-        if (sigemptyset(&sigchld) == -1) {
-                TRACE_ERRNO("sigemptyset() failed");
-                goto _out_free_exec_arg;
-        }
-        if (sigaddset(&sigchld, SIGCHLD) == -1) {
-                TRACE_ERRNO("sigaddset() failed");
-                goto _out_free_exec_arg;
-        }
-        if (sigprocmask(SIG_BLOCK, &sigchld, NULL) == -1) {
-                TRACE_ERRNO("sigprocmask() failed");
-                goto _out_free_exec_arg;
-        }
-        int sigchld_fd = signalfd(-1, &sigchld, SFD_CLOEXEC);
-        if (sigchld_fd == -1) {
-                TRACE_ERRNO("signalfd() failed");
-                goto _out_free_exec_arg;
-        }
+	sigset_t sigchld;
+	if (sigemptyset(&sigchld) == -1) {
+	        TRACE_ERRNO("sigemptyset() failed");
+	        goto _out_free_exec_arg;
+	}
+	if (sigaddset(&sigchld, SIGCHLD) == -1) {
+	        TRACE_ERRNO("sigaddset() failed");
+	        goto _out_free_exec_arg;
+	}
+	if (sigprocmask(SIG_BLOCK, &sigchld, NULL) == -1) {
+	        TRACE_ERRNO("sigprocmask() failed");
+	        goto _out_free_exec_arg;
+	}
+	int sigchld_fd = signalfd(-1, &sigchld, SFD_CLOEXEC);
+	if (sigchld_fd == -1) {
+	        TRACE_ERRNO("signalfd() failed");
+	        goto _out_free_exec_arg;
+	}
 
 	pid_t socat_pid = fork_socat(&sigchld, args);
 	if (socat_pid == -1)
