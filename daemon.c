@@ -99,7 +99,7 @@ static int on_sigchld(int *sigchld_fd, pid_t pid, int *stdin_fd)
 		return -1;
 	}
 	TRACE("signal received: signo=%i, code=%i, pid=%i", si.ssi_signo, si.ssi_code, si.ssi_pid);
-	if (si.ssi_signo != SIGCHLD || si.ssi_code != CLD_EXITED || si.ssi_pid != pid)
+	if (si.ssi_signo != SIGCHLD || si.ssi_code != CLD_EXITED || (pid_t)si.ssi_pid != pid)
 		return 0;
 	if (reset_fd(sigchld_fd) == -1)
 		return -1;

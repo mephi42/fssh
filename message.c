@@ -18,6 +18,7 @@ int get_msg_type(zmq_msg_t *msg)
 
 static void zmq_free_wrapper(void *data, void *hint)
 {
+	(void)hint;
 	free(data);
 }
 

@@ -8,7 +8,7 @@ vars.Add('LINKFLAGS', 'Additional linker flags', None)
 
 env = Environment()
 vars.Update(env)
-env.Append(CFLAGS=['-std=c99', '-Wall', '-Werror', '-g2', '-O3'])
+env.Append(CFLAGS=['-std=c99', '-Wall', '-Wextra', '-Werror', '-g2', '-O3'])
 env.Append(LIBS=['zmq'])
 if env['ENABLE_LTTNG_UST']:
     env.Append(CPPDEFINES=['ENABLE_LTTNG_UST'])
