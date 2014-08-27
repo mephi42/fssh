@@ -24,13 +24,14 @@ void sbuf_reset(struct sbuf *sbuf)
 int sbuf_ensure_capacity(struct sbuf *sbuf, size_t capacity)
 {
 	while (capacity >= sbuf->size) {
-		char *orig = sbuf->s;
-		sbuf->s = realloc(sbuf->s, sbuf->size * 2);
-		if (sbuf->s == orig) {
-			TRACE("realloc(%zu) failed", sbuf->size * 2);
+		size_t new_size = sbuf->size * 2;
+		char *new_s = realloc(sbuf->s, new_size);
+		if (new_s == NULL) {
+			TRACE("realloc(%zu) failed", new_size);
 			return -1;
 		}
-		sbuf->size *= 2;
+		sbuf->s = new_s;
+		sbuf->size = new_size;
 	}
 	return 0;
 }
