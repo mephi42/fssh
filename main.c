@@ -32,7 +32,7 @@ static int guid_init(char guid[GUID_STRING_SIZE])
 	}
 	for (int i = 0, j = 0; i < GUID_BINARY_SIZE; ++i)
 		j += snprintf(guid + j, GUID_STRING_SIZE - j, "%.02x", (int)bytes[i] & 0xff);
-	TRACE("guid=%s", guid);
+	TRACE("guid=%s", &guid[0]);
 	rc = 0;
 _out_close:
 	if (close(fd) == -1)
