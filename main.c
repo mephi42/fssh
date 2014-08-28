@@ -140,6 +140,13 @@ __attribute__((noreturn)) static void exec_ssh(const char *unix_socket, const ch
 	sa.sun_family = AF_UNIX;
 	strncpy(sa.sun_path, unix_socket, sizeof(sa.sun_path));
 
+	if (unlink(sa.sun_path) == -1) {
+		if (errno != ENOENT) {
+			TRACE("unlink(%s) failed", sa.sun_path);
+			goto _fail;
+		}
+	}
+
 	int server = un_listen(&sa);
 	if (server == -1) {
 		TRACE("un_listen(%s) failed", sa.sun_path);

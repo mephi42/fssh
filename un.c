@@ -22,7 +22,7 @@ int un_listen(const struct sockaddr_un *sa)
 	}
 
 	if (bind(fd, (const struct sockaddr *)sa, sizeof(*sa)) == -1) {
-		TRACE_ERRNO("bind(%d) failed", fd);
+		TRACE_ERRNO("bind(%d, %s) failed", fd, sa->sun_path);
 		goto _fail_bind;
 	}
 
