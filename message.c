@@ -9,11 +9,11 @@
 #include "trace.h"
 #include <unistd.h>
 
-int get_msg_type(zmq_msg_t *msg)
+int get_msg_hdr(zmq_msg_t *msg)
 {
 	char *data = zmq_msg_data(msg);
-	char type = data[0];
-	return type & 0xff;
+	char hdr = data[0];
+	return hdr & 0xff;
 }
 
 static void zmq_free_wrapper(void *data, void *hint)
@@ -22,7 +22,7 @@ static void zmq_free_wrapper(void *data, void *hint)
 	free(data);
 }
 
-int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char msg_type)
+int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char msg_type, int *msg_seq)
 {
 	while (1) {
 		if (*msg_valid)
@@ -33,7 +33,7 @@ int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char m
 			TRACE("malloc(%zu) failed", bufsize);
 			return -1;
 		}
-		buf[0] = msg_type;
+		buf[0] = MSG_HDR(msg_type, *msg_seq);
 		ssize_t count = read(*fd, buf + 1, bufsize - 1);
 		if (count == -1) {
 			if (errno == EAGAIN) {
@@ -51,6 +51,7 @@ int on_fd_readable(int *fd, void *socket, zmq_msg_t *msg, int *msg_valid, char m
 			return -1;
 		}
 		*msg_valid = 1;
+		++(*msg_seq);
 		if (socket_write(socket, msg, msg_valid) == -1)
 			return -1;
 		if (count == 0)
@@ -67,7 +68,8 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 	if (msg_size == 1) {
 		if (reset_fd(fd) == -1)
 			return -1;
-		TRACE("closed stream, type=%i", get_msg_type(msg));
+		int msg_hdr = get_msg_hdr(msg);
+		TRACE("closed stream, type=%i, seq=%i", MSG_HDR_TYPE(msg_hdr), MSG_HDR_SEQ(msg_hdr));
 	} else {
 		while (*msg_pos != msg_size) {
 			ssize_t count = write(*fd, msg_data + *msg_pos, msg_size - *msg_pos);
@@ -77,7 +79,8 @@ int fd_write(int *fd, zmq_msg_t *msg, size_t *msg_pos)
 				TRACE_ERRNO("write(%i, %p, %zu) failed", *fd, msg_data + *msg_pos, msg_size - *msg_pos);
 				return -1;
 			}
-			TRACE("wrote data from message, type=%i, size=%zd", get_msg_type(msg), count);
+			int msg_hdr = get_msg_hdr(msg);
+			TRACE("wrote data from message, type=%i, seq=%i, size=%zd", MSG_HDR_TYPE(msg_hdr), MSG_HDR_SEQ(msg_hdr), count);
 			*msg_pos += count;
 		}
 	}
@@ -91,13 +94,17 @@ int socket_write(void *socket, zmq_msg_t *msg, int *msg_valid)
 {
 	if (!*msg_valid)
 		return 0;
+	int msg_hdr = get_msg_hdr(msg);
+	int msg_type = MSG_HDR_TYPE(msg_hdr);
+	int msg_seq = MSG_HDR_SEQ(msg_hdr);
+	size_t msg_size = zmq_msg_size(msg);
 	if (zmq_msg_send(msg, socket, ZMQ_DONTWAIT) == -1) {
 		if (errno == EAGAIN)
 			return 0;
 		TRACE_ERRNO("zmq_msg_send(%p) failed", socket);
 		return -1;
 	}
-	TRACE("sent message, type=%i, size=%zu", get_msg_type(msg), zmq_msg_size(msg));
+	TRACE("sent message, type=%i, seq=%i, size=%zu", msg_type, msg_seq, msg_size);
 	*msg_valid = 0;
 	return 0;
 }

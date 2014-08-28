@@ -55,13 +55,13 @@ _fail:
 	_exit(1);
 }
 
-static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos)
+static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos, int *exp_seq)
 {
 	while (1) {
 		if (*stdin_msg_pos)
 			return 0;
 		if (zmq_msg_init(stdin_msg) == -1) {
-			TRACE("zmq_msg_init() failed");
+			TRACE_ERRNO("zmq_msg_init() failed");
 			return -1;
 		}
 		if (zmq_msg_recv(stdin_msg, socket, ZMQ_DONTWAIT) == -1) {
@@ -75,9 +75,16 @@ static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg,
 			TRACE("empty message received");
 			return -1;
 		}
-		char *msg_data = zmq_msg_data(stdin_msg);
-		TRACE("received message, type=%i, size=%zu", get_msg_type(stdin_msg), msg_size);
-		if (msg_data[0] == msg_type_stdin) {
+		int msg_hdr = get_msg_hdr(stdin_msg);
+		int msg_type = MSG_HDR_TYPE(msg_hdr);
+		int msg_seq = MSG_HDR_SEQ(msg_hdr);
+		TRACE("received message, type=%i, seq=%i, size=%zu", msg_type, msg_seq, msg_size);
+		if (msg_seq != *exp_seq) {
+			TRACE("warning: exp_seq=%i", *exp_seq);
+			*exp_seq = msg_seq;
+		}
+		*exp_seq = ((*exp_seq) + 1) & MSG_HDR_SEQ_MASK;
+		if (msg_type == msg_type_stdin) {
 			*stdin_msg_pos = 1;
 			if (fd_write(stdin_fd, stdin_msg, stdin_msg_pos) == -1)
 				return -1;
@@ -124,6 +131,8 @@ static int forward(pid_t pid, int *sigchld_fd, int stdin_pipe[2], int stdout_pip
 		TRACE_ERRNO("close(%i) failed", stderr_pipe[1]);
 	stderr_pipe[1] = -1;
 
+	int msg_seq = 0;
+	int exp_seq = 0;
 	zmq_msg_t stdin_msg;
 	size_t stdin_msg_pos = 0;
 	zmq_msg_t stdout_msg;
@@ -216,13 +225,13 @@ static int forward(pid_t pid, int *sigchld_fd, int stdin_pipe[2], int stdout_pip
 				goto _out;
 		}
 		if (stdout_item && (stdout_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
-			if (on_fd_readable(&stdout_pipe[0], socket, &stdout_msg, &stdout_msg_valid, msg_type_stdout) == -1)
+			if (on_fd_readable(&stdout_pipe[0], socket, &stdout_msg, &stdout_msg_valid, msg_type_stdout, &msg_seq) == -1)
 				goto _out;
 		if (stderr_item && (stderr_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
-			if (on_fd_readable(&stderr_pipe[0], socket, &stderr_msg, &stderr_msg_valid, msg_type_stderr) == -1)
+			if (on_fd_readable(&stderr_pipe[0], socket, &stderr_msg, &stderr_msg_valid, msg_type_stderr, &msg_seq) == -1)
 				goto _out;
 		if (socket_item && (socket_item->revents & ZMQ_POLLIN))
-			if (on_socket_readable(socket, &stdin_pipe[1], &stdin_msg, &stdin_msg_pos) == -1)
+			if (on_socket_readable(socket, &stdin_pipe[1], &stdin_msg, &stdin_msg_pos, &exp_seq) == -1)
 				goto _out;
 		if (sigchld_item && (sigchld_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
 			if (on_sigchld(sigchld_fd, pid, &stdin_pipe[1]) == -1)
@@ -250,7 +259,7 @@ static int socket_write_exit(void *socket, int code)
 	}
 
 	char *data = zmq_msg_data(&msg);
-	data[0] = msg_type_exit;
+	data[0] = MSG_HDR(msg_type_exit, 0);
 	*(uint32_t*)&data[1] = htonl((uint32_t)code);
 
 	if (zmq_msg_send(&msg, socket, 0) == -1) {

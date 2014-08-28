@@ -7,7 +7,7 @@
 #include "trace.h"
 #include <unistd.h>
 
-static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_msg_t *msg, size_t *msg_pos, int *exited, int *code)
+static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_msg_t *msg, size_t *msg_pos, int *exited, int *code, int *exp_seq)
 {
 	while (1) {
 		if (*msg_pos)
@@ -28,8 +28,15 @@ static int on_socket_readable(void *socket, int *stdout_fd, int *stderr_fd, zmq_
 			return -1;
 		}
 		char *msg_data = zmq_msg_data(msg);
-		char msg_type = msg_data[0];
-		TRACE("received message, type=%i, size=%zu", (int)msg_type, msg_size);
+		int msg_hdr = msg_data[0] & 0xff;
+		int msg_type = MSG_HDR_TYPE(msg_hdr);
+		int msg_seq = MSG_HDR_SEQ(msg_hdr);
+		TRACE("received message, type=%i, seq=%i, size=%zu", msg_type, msg_seq, msg_size);
+		if (msg_seq != *exp_seq) {
+			TRACE("warning: expected seq=%i", *exp_seq);
+			*exp_seq = msg_seq;
+		}
+		*exp_seq = ((*exp_seq) + 1) & MSG_HDR_SEQ_MASK;
 		switch (msg_type) {
 		case msg_type_stdout:
 			*msg_pos = 1;
@@ -64,6 +71,8 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 {
 	int rc = -1;
 
+	int msg_seq = 0;
+	int exp_seq = 0;
 	zmq_msg_t stdin_msg;
 	int stdin_msg_valid = 0;
 	zmq_msg_t stdouterr_msg;
@@ -89,7 +98,7 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 		}
 
 		zmq_pollitem_t *stdout_item = NULL;
-		if (*stdout_fd != -1 && stdouterr_msg_pos && ((char*)zmq_msg_data(&stdouterr_msg))[0] == msg_type_stdout) {
+		if (*stdout_fd != -1 && stdouterr_msg_pos && MSG_HDR_TYPE(get_msg_hdr(&stdouterr_msg)) == msg_type_stdout) {
 			stdout_item = item++;
 			stdout_item->socket = NULL;
 			stdout_item->fd = *stdout_fd;
@@ -97,7 +106,7 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 		}
 
 		zmq_pollitem_t *stderr_item = NULL;
-		if (*stderr_fd != -1 && stdouterr_msg_pos && ((char*)zmq_msg_data(&stdouterr_msg))[0] == msg_type_stderr) {
+		if (*stderr_fd != -1 && stdouterr_msg_pos && MSG_HDR_TYPE(get_msg_hdr(&stdouterr_msg)) == msg_type_stderr) {
 			stderr_item = item++;
 			stderr_item->socket = NULL;
 			stderr_item->fd = *stderr_fd;
@@ -144,11 +153,11 @@ static int forward(int *stdin_fd, int *stdout_fd, int *stderr_fd, void *socket, 
 			if (socket_write(socket, &stdin_msg, &stdin_msg_valid) == -1)
 				goto _out;
 		if (stdin_item && (stdin_item->revents & (ZMQ_POLLIN | ZMQ_POLLERR)))
-			if (on_fd_readable(stdin_fd, socket, &stdin_msg, &stdin_msg_valid, msg_type_stdin) == -1)
+			if (on_fd_readable(stdin_fd, socket, &stdin_msg, &stdin_msg_valid, msg_type_stdin, &msg_seq) == -1)
 				goto _out;
 		int exited = 0;
 		if (socket_item && (socket_item->revents & ZMQ_POLLIN))
-			if (on_socket_readable(socket, stdout_fd, stderr_fd, &stdouterr_msg, &stdouterr_msg_pos, &exited, code) == -1)
+			if (on_socket_readable(socket, stdout_fd, stderr_fd, &stdouterr_msg, &stdouterr_msg_pos, &exited, code, &exp_seq) == -1)
 				goto _out;
 		if (exited)
 			break;
