@@ -2,6 +2,7 @@
 
 #include "anyzmq.h"
 #include <arpa/inet.h>
+#include "child.h"
 #include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
@@ -16,44 +17,6 @@
 #include "reset.h"
 #include "trace.h"
 #include <unistd.h>
-
-__attribute__((noreturn)) static void execute(char **argv, int stdin_pipe[2], int stdout_pipe[2], int stderr_pipe[2])
-{
-	if (dup2(stdin_pipe[0], STDIN_FILENO) == -1) {
-		TRACE_ERRNO("dup2(%i, %i) failed", stdin_pipe[0], STDIN_FILENO);
-		goto _fail;
-	}
-	if (close(stdin_pipe[0]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdin_pipe[0]);
-	if (close(stdin_pipe[1]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdin_pipe[1]);
-
-	if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1) {
-		TRACE_ERRNO("dup2(%i, %i) failed", stdout_pipe[1], STDOUT_FILENO);
-		goto _fail;
-	}
-	if (close(stdout_pipe[0]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdout_pipe[0]);
-	if (close(stdout_pipe[1]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdout_pipe[1]);
-
-	if (dup2(stderr_pipe[1], STDERR_FILENO) == -1) {
-		TRACE_ERRNO("dup2(%i, %i) failed", stderr_pipe[1], STDERR_FILENO);
-		goto _fail;
-	}
-	if (close(stderr_pipe[0]) == -1)
-		TRACE_ERRNO("close(%i) failed", stderr_pipe[0]);
-	if (close(stderr_pipe[1]) == -1)
-		TRACE_ERRNO("close(%i) failed", stderr_pipe[1]);
-
-	if (execvp(argv[0], argv) == -1) {
-		TRACE_ERRNO("execvp(%s) failed", argv[0]);
-		goto _fail;
-	}
-
-_fail:
-	_exit(1);
-}
 
 static int on_socket_readable(void *socket, int *stdin_fd, zmq_msg_t *stdin_msg, size_t *stdin_msg_pos, int *exp_seq)
 {
@@ -277,72 +240,25 @@ static int execute_and_forward(char **argv, void *socket)
 {
 	int rc = -1;
 
-	int stdin_pipe[2];
-	if (pipe(stdin_pipe) == -1) {
-		TRACE_ERRNO("pipe(stdin_pipe) failed");
+	struct child child;
+	if (child_init(&child, argv) == -1) {
+		TRACE("child_init() failed");
 		goto _out;
 	}
-	TRACE("stdin=(r=%i, w=%i)", stdin_pipe[0], stdin_pipe[1]);
 
-	int stdout_pipe[2];
-	if (pipe(stdout_pipe) == -1) {
-		TRACE_ERRNO("pipe(stdout_pipe) failed");
-		goto _out_free_stdin;
-	}
-	TRACE("stdout=(r=%i, w=%i)", stdout_pipe[0], stdout_pipe[1]);
-
-	int stderr_pipe[2];
-	if (pipe(stderr_pipe) == -1) {
-		TRACE_ERRNO("pipe(stderr_pipe) failed");
-		goto _out_free_stdout;
-	}
-	TRACE("stderr=(r=%i, w=%i)", stderr_pipe[0], stderr_pipe[1]);
-
-	sigset_t sigchld;
-	if (sigemptyset(&sigchld) == -1) {
-		TRACE_ERRNO("sigemptyset() failed");
-		goto _out_free_stderr;
-	}
-	if (sigaddset(&sigchld, SIGCHLD) == -1) {
-		TRACE_ERRNO("sigaddset() failed");
-		goto _out_free_stderr;
-	}
-	if (sigprocmask(SIG_BLOCK, &sigchld, NULL) == -1) {
-		TRACE_ERRNO("sigprocmask() failed");
-		goto _out_free_stderr;
-	}
-	int sigchld_fd = signalfd(-1, &sigchld, SFD_NONBLOCK | SFD_CLOEXEC);
-	if (sigchld_fd == -1) {
-		TRACE_ERRNO("signalfd() failed");
-		goto _out_free_stderr;
-	}
-
-	pid_t pid = fork();
-	if (pid == -1) {
-		TRACE_ERRNO("fork() failed");
-		goto _out_close_sigchld_fd;
-	}
-	if (pid == 0) {
-		if (sigprocmask(SIG_UNBLOCK, &sigchld, NULL) == -1) {
-			TRACE_ERRNO("sigprocmask() failed");
-			_exit(1);
-		}
-		execute(argv, stdin_pipe, stdout_pipe, stderr_pipe);
-	}
-
-	if (forward(pid, &sigchld_fd, stdin_pipe, stdout_pipe, stderr_pipe, socket) == -1)
+	if (forward(child.pid, &child.sigchld_fd, child.pipes.stdin_pipe, child.pipes.stdout_pipe, child.pipes.stderr_pipe, socket) == -1)
 		goto _out_wait;
 
 	rc = 0;
 
 _out_wait:
-	if (rc == -1 && kill(pid, SIGKILL) == -1)
-		TRACE_ERRNO("kill(%i, SIGKILL) failed", pid);
+	if (rc == -1 && kill(child.pid, SIGKILL) == -1)
+		TRACE_ERRNO("kill(%i, SIGKILL) failed", child.pid);
 	int status;
-	if (waitpid(pid, &status, 0) == -1) {
-		TRACE_ERRNO("waitpid(%i) failed", pid);
+	if (waitpid(child.pid, &status, 0) == -1) {
+		TRACE_ERRNO("waitpid(%i) failed", child.pid);
 	} else if (rc == 0) {
-		TRACE("%s (%i) exited with status %i", argv[0], pid, status);
+		TRACE("%s (%i) exited with status %i", argv[0], child.pid, status);
 		int code;
 		if (WIFEXITED(status))
 			code = WEXITSTATUS(status);
@@ -352,27 +268,8 @@ _out_wait:
 			rc = -1;
 	}
 
-_out_close_sigchld_fd:
-	if (sigchld_fd != -1 && close(sigchld_fd) == -1)
-		TRACE_ERRNO("close(%i) failed", sigchld_fd);
-
-_out_free_stderr:
-	if (stderr_pipe[0] != -1 && close(stderr_pipe[0]) == -1)
-		TRACE_ERRNO("close(%i) failed", stderr_pipe[0]);
-	if (stderr_pipe[1] != -1 && close(stderr_pipe[1]) == -1)
-		TRACE_ERRNO("close(%i) failed", stderr_pipe[1]);
-
-_out_free_stdout:
-	if (stdout_pipe[0] != -1 && close(stdout_pipe[0]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdout_pipe[0]);
-	if (stdout_pipe[1] != -1 && close(stdout_pipe[1]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdout_pipe[1]);
-
-_out_free_stdin:
-	if (stdin_pipe[0] != -1 && close(stdin_pipe[0]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdin_pipe[0]);
-	if (stdin_pipe[1] != -1 && close(stdin_pipe[1]) == -1)
-		TRACE_ERRNO("close(%i) failed", stdin_pipe[1]);
+	if (child_reset(&child) == -1)
+		TRACE("child_reset() failed");
 
 _out:
 	return rc;

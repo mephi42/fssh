@@ -14,6 +14,7 @@ if env['ENABLE_LTTNG_UST']:
     env.Append(CPPDEFINES=['ENABLE_LTTNG_UST'])
     env.Append(LIBS=['lttng-ust'])
 
+child = env.StaticObject('child.o', 'child.c')
 client = env.StaticObject('client.o', 'client.c')
 daemon = env.StaticObject('daemon.o', 'daemon.c')
 fwd = env.StaticObject('fwd.o', 'fwd.c')
@@ -27,7 +28,7 @@ un = env.StaticObject('un.o', 'un.c')
 
 fssh = env.Program('fssh', [main, reset, sbuf, un])
 fssh_client = env.Program('fssh-client', [client, message, nonblock, reset])
-fssh_daemon = env.Program('fssh-daemon', [daemon, message, nonblock, reset])
+fssh_daemon = env.Program('fssh-daemon', [child, daemon, message, nonblock, reset])
 fssh_fwd = env.Program('fssh-fwd', [fwd])
 
 

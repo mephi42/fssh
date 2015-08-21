@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e -x
+cd $(dirname $(realpath $0))
+scons
+PATH="$PWD:$PATH" test/test-gzip 1048576 --count=16
