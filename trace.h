@@ -16,8 +16,9 @@
 
 #else
 
-#define TRACE(fmt, ...) do {} while (0)
-#define TRACE_ERRNO(fmt, ...) do {} while (0)
+static inline void unused(const char* fmt, ...) { (void)fmt; }
+#define TRACE(fmt, ...) do { unused(fmt, ##__VA_ARGS__); } while (0)
+#define TRACE_ERRNO(fmt, ...) do { unused(fmt, ##__VA_ARGS__); } while (0)
 
 #endif
 
